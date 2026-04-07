@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Expense Tracker</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<nav class="nav">
+  <button class="nav-btn active" onclick="showScreen('entry',this)">+ Add Expense</button>
+  <button class="nav-btn" onclick="showScreen('dashboard',this)">Analytics</button>
+</nav>
+
+<div id="screen-entry" class="screen active">
+  <div class="screen-header">
+    <div class="screen-title">Track Expense</div>
+    <div class="screen-sub">Every rupee accounted for</div>
+  </div>
+  <div class="form-card">
+    <div class="form-row">
+      <label class="form-label">Date</label>
+      <input class="form-input" type="date" id="f-date">
+    </div>
+    <div class="form-row">
+      <label class="form-label">Amount</label>
+      <div class="amount-wrap">
+        <span class="amount-prefix">₹</span>
+        <input class="form-input has-prefix" type="number" id="f-amount" placeholder="0.00" min="0" step="0.01">
+      </div>
+    </div>
+    <div class="form-row">
+      <label class="form-label">Category</label>
+      <div class="ac-wrap">
+        <input class="form-input" type="text" id="f-cat" placeholder="e.g. Food, Travel…" autocomplete="off">
+        <div class="ac-list" id="ac-list"></div>
+      </div>
+    </div>
+    <div class="form-row">
+      <label class="form-label">Note (optional)</label>
+      <input class="form-input" type="text" id="f-note" placeholder="Brief description…">
+    </div>
+    <button class="btn-add" onclick="addExpense()">Add Expense</button>
+  </div>
+
+  <div class="section-title">Recent</div>
+  <div class="expense-list" id="recent-list"></div>
+</div>
+
+<div id="screen-dashboard" class="screen">
+  <div class="screen-header">
+    <div class="screen-title">Analytics</div>
+    <div class="screen-sub" id="dash-date-label"></div>
+  </div>
+
+  <div class="stat-grid">
+    <div class="stat-card">
+      <div class="stat-label">Today</div>
+      <div class="stat-val" id="stat-today">₹0</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">This Week</div>
+      <div class="stat-val" id="stat-week">₹0</div>
+    </div>
+    <div class="stat-card highlight">
+      <div class="stat-label">This Month</div>
+      <div class="stat-val" id="stat-month">₹0</div>
+    </div>
+  </div>
+
+  <div class="chart-card">
+    <div class="chart-title"><span>Daily spending — this week</span></div>
+    <div class="chart-wrap" style="height:180px"><canvas id="chart-week"></canvas></div>
+  </div>
+
+  <div class="chart-card">
+    <div class="chart-title"><span>Monthly overview — last 6 months</span></div>
+    <div class="chart-wrap" style="height:160px"><canvas id="chart-month"></canvas></div>
+  </div>
+
+  <div class="chart-card">
+    <div class="chart-title"><span>Category breakdown</span></div>
+    <div style="display:flex;gap:12px;align-items:center">
+      <div class="chart-wrap" style="height:170px;flex:1"><canvas id="chart-cat"></canvas></div>
+      <div id="cat-legend" style="font-size:11px;flex-shrink:0;min-width:90px"></div>
+    </div>
+  </div>
+
+  <div class="section-title">Category breakdown</div>
+  <div class="filter-row" id="filter-row">
+    <span class="filter-label">Period:</span>
+  </div>
+  <div class="chart-card" style="padding:12px">
+    <table class="cat-table" id="cat-table">
+      <thead><tr><th>Category</th><th>Total</th><th>%</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <button class="btn-export" onclick="exportExcel()">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+    Export to Excel (.xlsx)
+  </button>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+const API_URL = 'http://localhost:3000/api';
+
+const CATS = [
+  {name:'Food & Dining',emoji:'🍽',color:'#c9962a'},
+  {name:'Groceries',emoji:'🛒',color:'#2a7a72'},
+  {name:'Transport',emoji:'🚗',color:'#2b5ea7'},
+  {name:'Utilities',emoji:'⚡',color:'#6b4c7a'},
+  {name:'Health',emoji:'❤️',color:'#c85b4a'},
+  {name:'Shopping',emoji:'🛍',color:'#e8874a'},
+  {name:'Entertainment',emoji:'🎬',color:'#4a7ab5'},
+  {name:'Travel',emoji:'✈️',color:'#2a9d6e'},
+  {name:'Education',emoji:'📚',color:'#7a5c2a'},
+  {name:'Rent',emoji:'🏠',color:'#5c6e7a'},
+  {name:'EMI',emoji:'🏦',color:'#7a3c5c'},
+  {name:'Subscriptions',emoji:'📱',color:'#3c6a5c'},
+  {name:'Gym & Fitness',emoji:'💪',color:'#7a4a2a'},
+  {name:'Gifts',emoji:'🎁',color:'#9a5a7a'},
+  {name:'Personal Care',emoji:'🧴',color:'#6a8a5a'},
+  {name:'Other',emoji:'📦',color:'#8a8480'},
+];
+
+function getCatInfo(name){
+  const c=CATS.find(c=>c.name.toLowerCase()===name.toLowerCase());
+  return c||{name,emoji:'💰',color:'#8a8480'};
+}
+
+let expensesCache = [];
+
+async function loadExpenses(){
+  try {
+    const res = await fetch(API_URL + '/expenses');
+    if (res.ok) {
+      const data = await res.json();
+      console.log('Loaded expenses:', data);
+      expensesCache = data.map(e => ({
+        ...e,
+        amount: parseFloat(e.amount)
+      }));
+      return expensesCache;
+    }
+    return [];
+  } catch (err) {
+    console.error('Load error:', err);
+    return expensesCache;
+  }
+}
+
+async function saveExpenses(arr){
+  try {
+    expensesCache = arr;
+  } catch (err) {
+    console.error('Save error:', err);
+  }
+}
+function formatAmt(n){return '₹'+Math.round(n).toLocaleString('en-IN')}
+const todayStr=()=>new Date().toISOString().slice(0,10);
+
+document.getElementById('f-date').value=todayStr();
+
+let acIdx=-1;
+const catInput=document.getElementById('f-cat');
+const acList=document.getElementById('ac-list');
+
+catInput.addEventListener('input',()=>{
+  const q=catInput.value.trim();
+  acIdx=-1;
+  if(q.length<2){acList.classList.remove('show');return}
+  const matches=CATS.filter(c=>c.name.toLowerCase().includes(q.toLowerCase()));
+  if(!matches.length){acList.classList.remove('show');return}
+  acList.innerHTML=matches.map(c=>`<div class="ac-item" data-name="${c.name}" onmousedown="pickCat('${c.name}')"><span class="ac-dot" style="background:${c.color}"></span>${c.name}</div>`).join('');
+  acList.classList.add('show');
+});
+
+catInput.addEventListener('keydown',e=>{
+  const items=acList.querySelectorAll('.ac-item');
+  if(!items.length)return;
+  if(e.key==='ArrowDown'){e.preventDefault();acIdx=Math.min(acIdx+1,items.length-1);items.forEach((el,i)=>el.classList.toggle('focused',i===acIdx))}
+  else if(e.key==='ArrowUp'){e.preventDefault();acIdx=Math.max(acIdx-1,0);items.forEach((el,i)=>el.classList.toggle('focused',i===acIdx))}
+  else if(e.key==='Enter'&&acIdx>=0){e.preventDefault();pickCat(items[acIdx].dataset.name)}
+  else if(e.key==='Escape'){acList.classList.remove('show')}
+});
+
+catInput.addEventListener('blur',()=>setTimeout(()=>acList.classList.remove('show'),150));
+function pickCat(name){catInput.value=name;acList.classList.remove('show')}
+
+async function addExpense(){
+  const date=document.getElementById('f-date').value;
+  const amount=parseFloat(document.getElementById('f-amount').value);
+  const cat=document.getElementById('f-cat').value.trim();
+  const note=document.getElementById('f-note').value.trim();
+  if(!date||!amount||amount<=0||!cat){showToast('Please fill date, amount and category');return}
+  
+  try {
+    const res = await fetch(API_URL + '/expenses', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: Date.now(), date, amount, category: cat, note })
+    });
+    if (res.ok) {
+      document.getElementById('f-amount').value='';
+      document.getElementById('f-cat').value='';
+      document.getElementById('f-note').value='';
+      await renderRecent();
+      showToast('Expense added!');
+    } else {
+      showToast('Error adding expense');
+    }
+  } catch (err) {
+    console.error(err);
+    showToast('Connection error');
+  }
+}
+
+async function deleteExpense(id){
+  try {
+    const res = await fetch(API_URL + '/expenses/' + id, { method: 'DELETE' });
+    if (res.ok) {
+      await renderRecent();
+      showToast('Deleted');
+    }
+  } catch (err) {
+    console.error(err);
+    showToast('Error deleting expense');
+  }
+}
+
+async function renderRecent(){
+  const arr=(await loadExpenses()).slice(0,10);
+  const el=document.getElementById('recent-list');
+  if(!arr.length){el.innerHTML='<div class="empty-state"><div class="empty-icon">📊</div>No expenses yet. Add your first one above.</div>';return}
+  el.innerHTML=arr.map(e=>{
+    const c=getCatInfo(e.category);
+    const d=new Date(e.date+'T00:00:00');
+    const ds=d.toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});
+    return`<div class="expense-item">
+      <div class="exp-cat-dot" style="background:${c.color}22">${c.emoji}</div>
+      <div class="exp-info">
+        <div class="exp-cat">${e.category}</div>
+        <div class="exp-date">${ds}${e.note?' · '+e.note:''}</div>
+      </div>
+      <div class="exp-amount">${formatAmt(e.amount)}</div>
+      <button class="exp-del" onclick="deleteExpense(${e.id})" title="Delete">×</button>
+    </div>`;
+  }).join('');
+}
+
+let chartWeek,chartMonth,chartCat;
+
+function getWeekDates(){
+  const today=new Date();
+  const day=today.getDay()||7;
+  const mon=new Date(today);mon.setDate(today.getDate()-day+1);
+  return Array.from({length:7},(_,i)=>{const d=new Date(mon);d.setDate(mon.getDate()+i);return d.toISOString().slice(0,10)});
+}
+
+function getMonthsBack(n){
+  return Array.from({length:n},(_,i)=>{
+    const d=new Date();d.setDate(1);d.setMonth(d.getMonth()-(n-1-i));
+    return{key:`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`,label:d.toLocaleDateString('en-IN',{month:'short',year:'2-digit'})};
+  });
+}
+
+let activePeriod='month';
+
+async function buildDashboard(){
+  const arr=await loadExpenses();
+  console.log('Dashboard data:', arr);
+  const today=todayStr();
+  console.log('Today date:', today);
+  const weekDates=getWeekDates();
+  console.log('Week dates:', weekDates);
+  const thisMonth=today.slice(0,7);
+
+  const todayAmt=arr.filter(e=>e.date===today).reduce((s,e)=>s+e.amount,0);
+  const weekAmt=arr.filter(e=>weekDates.includes(e.date)).reduce((s,e)=>s+e.amount,0);
+  const monthAmt=arr.filter(e=>e.date.startsWith(thisMonth)).reduce((s,e)=>s+e.amount,0);
+
+  console.log('Today:', todayAmt, 'Week:', weekAmt, 'Month:', monthAmt);
+
+  document.getElementById('stat-today').textContent=formatAmt(todayAmt);
+  document.getElementById('stat-week').textContent=formatAmt(weekAmt);
+  document.getElementById('stat-month').textContent=formatAmt(monthAmt);
+  document.getElementById('dash-date-label').textContent=new Date().toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+
+  const dayLabels=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const weekData=weekDates.map(d=>arr.filter(e=>e.date===d).reduce((s,e)=>s+e.amount,0));
+  const todayIdx=weekDates.indexOf(today);
+  const barColors=weekData.map((_,i)=>i===todayIdx?'#c9962a':'#e4dfd5');
+
+  if(chartWeek)chartWeek.destroy();
+  chartWeek=new Chart(document.getElementById('chart-week'),{
+    type:'bar',
+    data:{labels:dayLabels,datasets:[{data:weekData,backgroundColor:barColors,borderRadius:5,borderSkipped:false}]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>'₹'+Math.round(ctx.parsed.y).toLocaleString('en-IN')}}},scales:{x:{grid:{display:false},ticks:{font:{size:11},color:'#8a8480'}},y:{grid:{color:'#f0ede6'},ticks:{callback:v=>'₹'+Math.round(v/1000)+'k',font:{size:10},color:'#8a8480'},border:{display:false}}}}
+  });
+
+  const months=getMonthsBack(6);
+  const monthData=months.map(m=>arr.filter(e=>e.date.startsWith(m.key)).reduce((s,e)=>s+e.amount,0));
+  if(chartMonth)chartMonth.destroy();
+  chartMonth=new Chart(document.getElementById('chart-month'),{
+    type:'line',
+    data:{labels:months.map(m=>m.label),datasets:[{data:monthData,borderColor:'#c9962a',backgroundColor:'rgba(201,150,42,.08)',borderWidth:2,pointBackgroundColor:'#c9962a',pointRadius:4,fill:true,tension:.35}]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>'₹'+Math.round(ctx.parsed.y).toLocaleString('en-IN')}}},scales:{x:{grid:{display:false},ticks:{font:{size:11},color:'#8a8480'}},y:{grid:{color:'#f0ede6'},ticks:{callback:v=>'₹'+Math.round(v/1000)+'k',font:{size:10},color:'#8a8480'},border:{display:false}}}}
+  });
+
+  buildCategorySection(arr,activePeriod);
+}
+
+const CAT_COLORS=['#c9962a','#2a7a72','#2b5ea7','#6b4c7a','#c85b4a','#e8874a','#4a7ab5','#2a9d6e','#7a5c2a','#5c6e7a','#7a3c5c','#3c6a5c'];
+
+function buildCategorySection(arr,period){
+  const today=new Date();
+  const todayStr2=today.toISOString().slice(0,10);
+  let filtered=arr;
+  if(period==='today')filtered=arr.filter(e=>e.date===todayStr2);
+  else if(period==='week'){const wd=getWeekDates();filtered=arr.filter(e=>wd.includes(e.date))}
+  else if(period==='month')filtered=arr.filter(e=>e.date.startsWith(todayStr2.slice(0,7)));
+
+  const catMap={};
+  filtered.forEach(e=>{catMap[e.category]=(catMap[e.category]||0)+e.amount});
+  const cats=Object.entries(catMap).sort((a,b)=>b[1]-a[1]);
+  const total=cats.reduce((s,[,v])=>s+v,0);
+
+  if(chartCat)chartCat.destroy();
+  if(cats.length){
+    const colors=cats.map((_,i)=>CAT_COLORS[i%CAT_COLORS.length]);
+    chartCat=new Chart(document.getElementById('chart-cat'),{
+      type:'doughnut',
+      data:{labels:cats.map(c=>c[0]),datasets:[{data:cats.map(c=>c[1]),backgroundColor:colors,borderWidth:2,borderColor:'#fff'}]},
+      options:{responsive:true,maintainAspectRatio:false,cutout:'65%',plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>{const pct=total?Math.round(ctx.parsed/total*100):0;return`₹${Math.round(ctx.parsed).toLocaleString('en-IN')} (${pct}%)`}}}}}
+    });
+    document.getElementById('cat-legend').innerHTML=cats.slice(0,6).map((c,i)=>`<div style="display:flex;align-items:center;gap:5px;margin-bottom:5px"><span style="width:8px;height:8px;border-radius:2px;background:${colors[i]};flex-shrink:0"></span><span style="font-size:10px;color:#4a4642;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:80px">${c[0]}</span></div>`).join('');
+  } else {
+    document.getElementById('cat-legend').innerHTML='';
+  }
+
+  const tbody=document.querySelector('#cat-table tbody');
+  if(!cats.length){tbody.innerHTML='<tr><td colspan="4" style="color:#8a8480;text-align:center;padding:16px;font-size:12px">No data for this period</td></tr>';return}
+  tbody.innerHTML=cats.map(([name,amt],i)=>{
+    const pct=total?Math.round(amt/total*100):0;
+    const col=CAT_COLORS[i%CAT_COLORS.length];
+    const ci=getCatInfo(name);
+    return`<tr>
+      <td style="display:flex;align-items:center;gap:7px"><span>${ci.emoji}</span><span>${name}</span></td>
+      <td style="font-weight:500">${formatAmt(amt)}</td>
+      <td style="color:#8a8480">${pct}%</td>
+      <td><div class="cat-bar-wrap"><div class="cat-bar" style="width:${pct}%;background:${col}"></div></div></td>
+    </tr>`;
+  }).join('');
+
+  const fr=document.getElementById('filter-row');
+  fr.innerHTML='<span class="filter-label">Period:</span>'+
+    ['today','week','month','all'].map(p=>`<button class="filter-chip${p===period?' active':''}" onclick="setPeriod('${p}')">${p.charAt(0).toUpperCase()+p.slice(1)}</button>`).join('');
+}
+
+async function setPeriod(p){activePeriod=p;buildCategorySection(await loadExpenses(),p)}
+
+async function exportExcel(){
+  const arr=await loadExpenses();
+  if(!arr.length){showToast('No expenses to export');return}
+  const ws=XLSX.utils.json_to_sheet(arr.map(e=>({Date:e.date,Category:e.category,Amount:e.amount,Note:e.note||''})));
+  ws['!cols']=[{wch:14},{wch:22},{wch:12},{wch:30}];
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,'Expenses',ws);
+  const bycat={};arr.forEach(e=>{bycat[e.category]=(bycat[e.category]||0)+e.amount});
+  const sumRows=[['Category','Total (₹)'],...Object.entries(bycat).sort((a,b)=>b[1]-a[1])];
+  const ws2=XLSX.utils.aoa_to_sheet(sumRows);
+  ws2['!cols']=[{wch:22},{wch:14}];
+  XLSX.utils.book_append_sheet(wb,'Summary',ws2);
+  XLSX.writeFile(wb,`expenses_${todayStr()}.xlsx`);
+  showToast('Excel exported!');
+}
+
+function showScreen(id, btn){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
+  document.getElementById('screen-'+id).classList.add('active');
+  if(btn) btn.classList.add('active');
+  if(id==='dashboard')buildDashboard();
+}
+
+function showToast(msg){
+  const t=document.getElementById('toast');
+  t.textContent=msg;t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'),2200);
+}
+
+renderRecent().catch(console.error);
+</script>
+</body>
+</html>
