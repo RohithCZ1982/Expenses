@@ -11,8 +11,6 @@ services:
       - key: PORT
         value: 3000
         
-  - type: pserv
-    name: expense-tracker-db
-    env: postgres
+databases:
+  - name: expense-tracker-db
     plan: free
-    ipAllowList: []
