@@ -44,7 +44,7 @@
     <button class="btn-add" onclick="addExpense()">Add Expense</button>
   </div>
 
-  <div class="section-title">Recent</div>
+  <div class="section-title" id="recent-title">Recent</div>
   <div class="expense-list" id="recent-list"></div>
 </div>
 
@@ -167,6 +167,7 @@ function formatAmt(n){return '₹'+Math.round(n).toLocaleString('en-IN')}
 const todayStr=()=>new Date().toISOString().slice(0,10);
 
 document.getElementById('f-date').value=todayStr();
+document.getElementById('f-date').addEventListener('change',()=>renderRecent().catch(console.error));
 
 let acIdx=-1;
 const catInput=document.getElementById('f-cat');
@@ -236,9 +237,18 @@ async function deleteExpense(id){
 }
 
 async function renderRecent(){
-  const arr=(await loadExpenses()).slice(0,10);
+  const selectedDate=document.getElementById('f-date').value;
+  const all=await loadExpenses();
+  const arr=selectedDate?all.filter(e=>e.date===selectedDate):all.slice(0,10);
   const el=document.getElementById('recent-list');
-  if(!arr.length){el.innerHTML='<div class="empty-state"><div class="empty-icon">📊</div>No expenses yet. Add your first one above.</div>';return}
+  const titleEl=document.getElementById('recent-title');
+  if(selectedDate){
+    const d=new Date(selectedDate+'T00:00:00');
+    titleEl.textContent=d.toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});
+  } else {
+    titleEl.textContent='Recent';
+  }
+  if(!arr.length){el.innerHTML='<div class="empty-state"><div class="empty-icon">📊</div>No expenses for this date.</div>';return}
   el.innerHTML=arr.map(e=>{
     const c=getCatInfo(e.category);
     const d=new Date(e.date+'T00:00:00');
