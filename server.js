@@ -72,11 +72,20 @@ async function neonAuthCall(path, options) {
   return { ok: r.ok, status: r.status, data };
 }
 
+// Better Auth requires an Origin header; use the browser's, falling back
+// to this app's own host
+function requestOrigin(req) {
+  return req.headers.origin || `${req.protocol}://${req.get('host')}`;
+}
+
 // Exchange a Better Auth session token for a short-lived JWT
-async function sessionToJwt(sessionToken) {
+async function sessionToJwt(sessionToken, origin) {
   const { ok, data } = await neonAuthCall('/token', {
     method: 'GET',
-    headers: { Authorization: `Bearer ${sessionToken}` },
+    headers: {
+      Authorization: `Bearer ${sessionToken}`,
+      ...(origin ? { Origin: origin } : {}),
+    },
   });
   return ok ? data.token : null;
 }
@@ -91,7 +100,7 @@ async function handleCredentialAuth(req, res, path) {
       : { email, password };
     const { ok, status, data } = await neonAuthCall(path, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Origin: requestOrigin(req) },
       body: JSON.stringify(body),
     });
     if (!ok) {
@@ -104,7 +113,7 @@ async function handleCredentialAuth(req, res, path) {
       return res.status(status >= 500 ? 502 : 401).json({ error: msg });
     }
     // data.token is the long-lived session token; the JWT is what our API verifies
-    const jwt = await sessionToJwt(data.token);
+    const jwt = await sessionToJwt(data.token, requestOrigin(req));
     if (!jwt) return res.status(502).json({ error: 'Signed in, but could not get an access token from the auth service' });
     if (data.user?.id) {
       try { await ensureAccess(data.user.id, email.toLowerCase()); }
@@ -126,7 +135,7 @@ app.post('/api/auth/refresh', async (req, res) => {
   const { refreshToken } = req.body || {};
   if (!refreshToken) return res.status(401).json({ error: 'No refresh token' });
   try {
-    const jwt = await sessionToJwt(refreshToken);
+    const jwt = await sessionToJwt(refreshToken, requestOrigin(req));
     if (!jwt) return res.status(401).json({ error: 'Session expired — please sign in again' });
     res.json({ accessToken: jwt });
   } catch (err) {
