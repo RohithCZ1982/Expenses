@@ -69,7 +69,7 @@ async function neonAuthCall(path, options) {
   if (!r.ok) {
     console.error(`Neon Auth ${path} -> ${r.status}:`, text.slice(0, 500));
   }
-  return { ok: r.ok, status: r.status, data };
+  return { ok: r.ok, status: r.status, data, headers: r.headers };
 }
 
 // Better Auth requires an Origin header; use the browser's, falling back
@@ -78,16 +78,39 @@ function requestOrigin(req) {
   return req.headers.origin || `${req.protocol}://${req.get('host')}`;
 }
 
-// Exchange a Better Auth session token for a short-lived JWT
-async function sessionToJwt(sessionToken, origin) {
-  const { ok, data } = await neonAuthCall('/token', {
-    method: 'GET',
-    headers: {
-      Authorization: `Bearer ${sessionToken}`,
-      ...(origin ? { Origin: origin } : {}),
-    },
-  });
-  return ok ? data.token : null;
+// The refresh credential we hand the client is an opaque base64 blob holding
+// the Better Auth session token and/or session cookie. Older clients may
+// still send a bare session token — treat those as bearer-only.
+function makeRefreshCred(bearer, cookie) {
+  return Buffer.from(JSON.stringify({ t: bearer || '', c: cookie || '' })).toString('base64');
+}
+
+function parseRefreshCred(s) {
+  try {
+    const o = JSON.parse(Buffer.from(String(s), 'base64').toString('utf8'));
+    if (o && (o.t || o.c)) return { t: o.t || '', c: o.c || '' };
+  } catch {}
+  return { t: String(s), c: '' };
+}
+
+function sessionCookiesFrom(headers) {
+  const cookies = typeof headers.getSetCookie === 'function' ? headers.getSetCookie() : [];
+  return cookies.map(c => c.split(';')[0]).join('; ');
+}
+
+// Get a verifiable JWT for a Better Auth session. Tries the JWT plugin's
+// /token endpoint (bearer and/or cookie), then falls back to /get-session,
+// which returns the JWT in a set-auth-jwt response header.
+async function getJwtForSession(cred, origin) {
+  const headers = origin ? { Origin: origin } : {};
+  if (cred.t) headers.Authorization = `Bearer ${cred.t}`;
+  if (cred.c) headers.Cookie = cred.c;
+  let r = await neonAuthCall('/token', { method: 'GET', headers });
+  if (r.ok && r.data.token) return r.data.token;
+  r = await neonAuthCall('/get-session', { method: 'GET', headers });
+  const headerJwt = r.headers.get('set-auth-jwt');
+  if (r.ok && headerJwt) return headerJwt;
+  return null;
 }
 
 async function handleCredentialAuth(req, res, path) {
@@ -98,7 +121,7 @@ async function handleCredentialAuth(req, res, path) {
     const body = path === '/sign-up/email'
       ? { name: email.split('@')[0], email, password }
       : { email, password };
-    const { ok, status, data } = await neonAuthCall(path, {
+    const { ok, status, data, headers } = await neonAuthCall(path, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Origin: requestOrigin(req) },
       body: JSON.stringify(body),
@@ -112,14 +135,16 @@ async function handleCredentialAuth(req, res, path) {
       }
       return res.status(status >= 500 ? 502 : 401).json({ error: msg });
     }
-    // data.token is the long-lived session token; the JWT is what our API verifies
-    const jwt = await sessionToJwt(data.token, requestOrigin(req));
+    // The session lives in data.token (bearer) and/or the set-cookie headers;
+    // the JWT our API verifies may already be in the set-auth-jwt header
+    const cred = { t: data.token || '', c: sessionCookiesFrom(headers) };
+    const jwt = headers.get('set-auth-jwt') || await getJwtForSession(cred, requestOrigin(req));
     if (!jwt) return res.status(502).json({ error: 'Signed in, but could not get an access token from the auth service' });
     if (data.user?.id) {
       try { await ensureAccess(data.user.id, email.toLowerCase()); }
       catch (err) { console.error('Could not record access row:', err.message); }
     }
-    res.json({ accessToken: jwt, refreshToken: data.token, userId: data.user?.id });
+    res.json({ accessToken: jwt, refreshToken: makeRefreshCred(cred.t, cred.c), userId: data.user?.id });
   } catch (err) {
     console.error('Auth error:', err);
     const detail = err?.cause?.code || err?.cause?.message || err.message || 'network error';
@@ -135,7 +160,7 @@ app.post('/api/auth/refresh', async (req, res) => {
   const { refreshToken } = req.body || {};
   if (!refreshToken) return res.status(401).json({ error: 'No refresh token' });
   try {
-    const jwt = await sessionToJwt(refreshToken, requestOrigin(req));
+    const jwt = await getJwtForSession(parseRefreshCred(refreshToken), requestOrigin(req));
     if (!jwt) return res.status(401).json({ error: 'Session expired — please sign in again' });
     res.json({ accessToken: jwt });
   } catch (err) {
