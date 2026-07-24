@@ -76,11 +76,15 @@ app.post('/api/scan-bill', async (req, res) => {
   if (!image) {
     return res.status(400).json({ error: 'No image provided' });
   }
+  const mt = mimeType || 'image/jpeg';
+  if (!/^image\//.test(mt) && mt !== 'application/pdf') {
+    return res.status(400).json({ error: 'Only images and PDF bills are supported' });
+  }
   if (!process.env.GEMINI_API_KEY) {
     return res.status(500).json({ error: 'GEMINI_API_KEY is not configured on the server' });
   }
 
-  const prompt = `You are an expense-tracking assistant. Analyze this bill/receipt image and extract:
+  const prompt = `You are an expense-tracking assistant. Analyze this bill/receipt (image or PDF) and extract:
 - "amount": the final total amount paid, as a number (no currency symbol). Use the grand total after taxes/discounts.
 - "date": the bill date in YYYY-MM-DD format. If no date is visible, use null.
 - "category": the best matching category from exactly this list: ${EXPENSE_CATEGORIES.join(', ')}.
@@ -99,7 +103,7 @@ If the image is not a bill or receipt, respond with {"error": "not a bill"}.`;
           contents: [{
             parts: [
               { text: prompt },
-              { inline_data: { mime_type: mimeType || 'image/jpeg', data: image } },
+              { inline_data: { mime_type: mt, data: image } },
             ],
           }],
           generationConfig: {

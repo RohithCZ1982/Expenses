@@ -23,7 +23,7 @@
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
       <span id="btn-scan-label">Scan Bill with AI</span>
     </button>
-    <input type="file" id="f-bill" accept="image/*" style="display:none" onchange="scanBill(this)">
+    <input type="file" id="f-bill" accept="image/*,application/pdf" style="display:none" onchange="scanBill(this)">
     <div class="scan-divider"><span>or enter manually</span></div>
     <div class="form-row">
       <label class="form-label">Date</label>
@@ -222,20 +222,31 @@ function compressImage(file){
   });
 }
 
+function readFileBase64(file){
+  return new Promise((resolve,reject)=>{
+    const reader=new FileReader();
+    reader.onload=()=>resolve(reader.result.split(',')[1]);
+    reader.onerror=()=>reject(new Error('Could not read file'));
+    reader.readAsDataURL(file);
+  });
+}
+
 async function scanBill(input){
   const file=input.files&&input.files[0];
   input.value='';
   if(!file)return;
+  const isPdf=file.type==='application/pdf'||/\.pdf$/i.test(file.name);
+  if(isPdf&&file.size>10*1024*1024){showToast('PDF too large (max 10 MB)');return}
   const btn=document.getElementById('btn-scan');
   const label=document.getElementById('btn-scan-label');
   btn.disabled=true;
   label.textContent='Scanning bill…';
   try{
-    const base64=await compressImage(file);
+    const base64=isPdf?await readFileBase64(file):await compressImage(file);
     const res=await fetch(API_URL+'/scan-bill',{
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({image:base64,mimeType:'image/jpeg'})
+      body:JSON.stringify({image:base64,mimeType:isPdf?'application/pdf':'image/jpeg'})
     });
     const data=await res.json();
     if(!res.ok){showToast(data.error||'Could not scan bill');return}
