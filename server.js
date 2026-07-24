@@ -23,10 +23,25 @@ app.use(express.static(__dirname));
 // Better Auth REST service) and a JWKS URL. The frontend never talks to it
 // directly; these endpoints proxy sign-up/sign-in/refresh, and requireAuth
 // verifies the JWT locally against the JWKS.
-const NEON_AUTH_URL = (process.env.NEON_AUTH_URL
+// Sanitize common paste mistakes: whitespace, surrounding quotes, and a
+// pasted "VITE_NEON_AUTH_URL=" variable-name prefix
+let NEON_AUTH_URL = (process.env.NEON_AUTH_URL
   || process.env.NEON_AUTH_BASE_URL
   || process.env.VITE_NEON_AUTH_URL
-  || '').replace(/\/+$/, '');
+  || '')
+  .trim()
+  .replace(/^['"]+|['"]+$/g, '')
+  .replace(/^[A-Z_]+=\s*/, '')
+  .replace(/\/+$/, '');
+if (NEON_AUTH_URL) {
+  try {
+    const u = new URL(NEON_AUTH_URL);
+    if (u.protocol !== 'https:') throw new Error('not https');
+  } catch (e) {
+    console.error(`NEON_AUTH_URL is not a valid https URL: "${NEON_AUTH_URL}" — auth disabled until fixed`);
+    NEON_AUTH_URL = '';
+  }
+}
 const NEON_AUTH_JWKS_URL = process.env.NEON_AUTH_JWKS_URL
   || (NEON_AUTH_URL ? `${NEON_AUTH_URL}/.well-known/jwks.json` : '');
 
@@ -98,7 +113,8 @@ async function handleCredentialAuth(req, res, path) {
     res.json({ accessToken: jwt, refreshToken: data.token, userId: data.user?.id });
   } catch (err) {
     console.error('Auth error:', err);
-    res.status(502).json({ error: 'Could not reach the auth service — check NEON_AUTH_URL' });
+    const detail = err?.cause?.code || err?.cause?.message || err.message || 'network error';
+    res.status(502).json({ error: `Could not reach the auth service (${detail}) — check NEON_AUTH_URL` });
   }
 }
 
@@ -517,7 +533,8 @@ app.listen(PORT, async () => {
         ? 'Neon Auth check: OK — JWKS reachable'
         : `Neon Auth check: FAILED — ${NEON_AUTH_JWKS_URL} returned ${r.status}; verify NEON_AUTH_URL matches the Auth URL in the Neon console`);
     } catch (err) {
-      console.log(`Neon Auth check: FAILED — cannot reach ${NEON_AUTH_JWKS_URL} (${err.message}); verify NEON_AUTH_URL`);
+      const detail = err?.cause?.code || err?.cause?.message || err.message;
+      console.log(`Neon Auth check: FAILED — cannot reach ${NEON_AUTH_JWKS_URL} (${detail}); verify NEON_AUTH_URL`);
     }
   }
   console.log(`Gemini configured: ${process.env.GEMINI_API_KEY ? 'yes' : 'NO — set GEMINI_API_KEY'}`);
