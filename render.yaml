@@ -16,3 +16,5 @@ services:
         sync: false
       - key: NEON_AUTH_URL
         sync: false
+      - key: ADMIN_EMAIL
+        sync: false

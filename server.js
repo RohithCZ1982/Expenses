@@ -83,6 +83,10 @@ async function handleCredentialAuth(req, res, path) {
     // data.token is the long-lived session token; the JWT is what our API verifies
     const jwt = await sessionToJwt(data.token);
     if (!jwt) return res.status(502).json({ error: 'Could not obtain session token' });
+    if (data.user?.id) {
+      try { await ensureAccess(data.user.id, email.toLowerCase()); }
+      catch (err) { console.error('Could not record access row:', err.message); }
+    }
     res.json({ accessToken: jwt, refreshToken: data.token, userId: data.user?.id });
   } catch (err) {
     console.error('Auth error:', err);
@@ -107,7 +111,29 @@ app.post('/api/auth/refresh', async (req, res) => {
   }
 });
 
-async function requireAuth(req, res, next) {
+// ---- Login approval ----
+// The account matching ADMIN_EMAIL is the admin and always has access.
+// Everyone else lands in user_access as 'pending' until the admin approves.
+// If ADMIN_EMAIL is unset, the approval system is disabled (everyone allowed).
+const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || '').trim().toLowerCase();
+
+function isAdminEmail(email) {
+  return !!ADMIN_EMAIL && (email || '').toLowerCase() === ADMIN_EMAIL;
+}
+
+// Upsert the user's access row and return their current status
+async function ensureAccess(userId, email) {
+  const initial = isAdminEmail(email) ? 'approved' : 'pending';
+  const { rows } = await pool.query(
+    `INSERT INTO user_access (user_id, email, status) VALUES ($1, $2, $3)
+     ON CONFLICT (user_id) DO UPDATE SET email = COALESCE(EXCLUDED.email, user_access.email)
+     RETURNING status`,
+    [userId, email || null, initial]
+  );
+  return rows[0].status;
+}
+
+async function verifyJwt(req, res, next) {
   if (!authConfigured(res)) return;
   const token = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
   if (!token) return res.status(401).json({ error: 'Not signed in' });
@@ -115,11 +141,76 @@ async function requireAuth(req, res, next) {
     const { payload } = await jwtVerify(token, getJwks());
     if (!payload.sub) throw new Error('No subject in token');
     req.userId = payload.sub;
-    next();
+    req.userEmail = (payload.email || '').toLowerCase();
+    req.isAdmin = isAdminEmail(req.userEmail);
   } catch (err) {
-    res.status(401).json({ error: 'Session expired — please sign in again' });
+    return res.status(401).json({ error: 'Session expired — please sign in again' });
   }
+  try {
+    req.accessStatus = req.isAdmin ? 'approved' : await ensureAccess(req.userId, req.userEmail);
+  } catch (err) {
+    console.error('Access check failed:', err.message);
+    return res.status(500).json({ error: 'Could not verify account access' });
+  }
+  next();
 }
+
+function requireApproved(req, res, next) {
+  if (ADMIN_EMAIL && req.accessStatus !== 'approved') {
+    return res.status(403).json({
+      error: req.accessStatus === 'rejected'
+        ? 'Access denied by the administrator'
+        : 'Your account is awaiting admin approval',
+    });
+  }
+  next();
+}
+
+const requireAuth = [verifyJwt, requireApproved];
+
+function requireAdmin(req, res, next) {
+  if (!req.isAdmin) return res.status(403).json({ error: 'Admin access required' });
+  next();
+}
+
+// Who am I — works for pending users too, so the UI can show their status
+app.get('/api/me', verifyJwt, (req, res) => {
+  res.json({
+    userId: req.userId,
+    email: req.userEmail,
+    status: ADMIN_EMAIL ? req.accessStatus : 'approved',
+    isAdmin: req.isAdmin,
+  });
+});
+
+// Admin: list users and change their access status
+app.get('/api/admin/users', verifyJwt, requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT user_id, email, status, created_at FROM user_access ORDER BY created_at DESC'
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/users/:id/status', verifyJwt, requireAdmin, async (req, res) => {
+  const { status } = req.body || {};
+  if (!['approved', 'rejected', 'pending'].includes(status)) {
+    return res.status(400).json({ error: 'Status must be approved, rejected or pending' });
+  }
+  try {
+    const { rowCount } = await pool.query(
+      'UPDATE user_access SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE user_id = $2',
+      [status, req.params.id]
+    );
+    if (!rowCount) return res.status(404).json({ error: 'User not found' });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // Initialize database table
 async function initDB() {
@@ -146,6 +237,13 @@ async function initDB() {
       CREATE INDEX IF NOT EXISTS idx_ai_usage_created ON ai_usage(created_at);
       ALTER TABLE expenses ADD COLUMN IF NOT EXISTS user_id TEXT;
       ALTER TABLE ai_usage ADD COLUMN IF NOT EXISTS user_id TEXT;
+      CREATE TABLE IF NOT EXISTS user_access (
+        user_id TEXT PRIMARY KEY,
+        email TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
       CREATE INDEX IF NOT EXISTS idx_expenses_user ON expenses(user_id, date);
       CREATE INDEX IF NOT EXISTS idx_ai_usage_user ON ai_usage(user_id, created_at);
     `;
@@ -403,6 +501,7 @@ app.listen(PORT, async () => {
   console.log(`Server running on http://localhost:${PORT}`);
   console.log(`Neon Auth configured: ${NEON_AUTH_URL ? 'yes (' + NEON_AUTH_URL + ')' : 'NO — set NEON_AUTH_URL'}`);
   console.log(`Gemini configured: ${process.env.GEMINI_API_KEY ? 'yes' : 'NO — set GEMINI_API_KEY'}`);
+  console.log(`Login approval: ${ADMIN_EMAIL ? 'on (admin: ' + ADMIN_EMAIL + ')' : 'OFF — set ADMIN_EMAIL to require approval for new users'}`);
   try {
     await initDB();
   } catch (err) {

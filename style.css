@@ -61,6 +61,13 @@ body{font-family:var(--ff-body);background:var(--cream);color:var(--ink);font-si
 .auth-toggle a{color:var(--gold);text-decoration:none;font-weight:500}
 .auth-toggle a:hover{text-decoration:underline}
 .nav-logout{flex:0 0 auto;padding:14px 14px;font-size:12px}
+.user-badge{padding:2px 8px;border-radius:10px;font-size:10px;font-weight:500;text-transform:capitalize}
+.user-badge.approved{background:#e2f2e9;color:var(--teal)}
+.user-badge.pending{background:var(--gold3);color:#7a5c2a}
+.user-badge.rejected{background:#f7e3df;color:var(--rose)}
+.user-btn{padding:6px 10px;border-radius:7px;border:var(--border);background:#fff;font-family:var(--ff-body);font-size:11px;font-weight:500;color:var(--ink2);cursor:pointer;margin-left:6px;transition:all .15s}
+.user-btn.approve:hover{background:var(--teal);color:#fff;border-color:var(--teal)}
+.user-btn.reject:hover{background:var(--rose);color:#fff;border-color:var(--rose)}
 
 .sum-select{padding:6px 8px;background:#fff;border:var(--border);border-radius:7px;font-family:var(--ff-body);font-size:12px;color:var(--ink2);cursor:pointer}
 .sum-select:focus{outline:none;border-color:var(--gold)}

@@ -32,8 +32,17 @@
 <nav class="nav">
   <button class="nav-btn active" onclick="showScreen('entry',this)">+ Add Expense</button>
   <button class="nav-btn" onclick="showScreen('dashboard',this)">Analytics</button>
+  <button class="nav-btn" id="nav-users" style="display:none" onclick="showScreen('admin',this)">Users</button>
   <button class="nav-btn nav-logout" onclick="logout()" title="Sign out">Sign out</button>
 </nav>
+
+<div id="screen-admin" class="screen">
+  <div class="screen-header">
+    <div class="screen-title">Users</div>
+    <div class="screen-sub">Approve who can sign in</div>
+  </div>
+  <div class="expense-list" id="admin-user-list"></div>
+</div>
 
 <div id="screen-entry" class="screen active">
   <div class="screen-header">
@@ -246,6 +255,11 @@ async function submitAuth(){
     const data=await res.json();
     if(!res.ok){errEl.textContent=data.error||'Authentication failed';return}
     setTokens(data.accessToken,data.refreshToken);
+    const me=await fetchMe();
+    if(!applyMe(me,errEl)){
+      if(!me)errEl.textContent='Could not verify account';
+      return;
+    }
     document.getElementById('auth-pass').value='';
     hideAuth();
     await renderRecent();
@@ -263,7 +277,72 @@ function logout(){
   expensesCache=[];
   aiUsageCache=[];
   document.getElementById('recent-list').innerHTML='';
+  document.getElementById('nav-users').style.display='none';
   showAuth();
+}
+
+function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+
+async function fetchMe(){
+  try{
+    const res=await api('/me');
+    if(res.ok)return await res.json();
+  }catch(e){console.error(e)}
+  return null;
+}
+
+// Returns true when the account may use the app; otherwise shows the
+// login screen with the approval status
+function applyMe(me,errEl){
+  if(!me)return false;
+  if(me.status!=='approved'){
+    setTokens('','');
+    showAuth();
+    if(errEl)errEl.textContent=me.status==='rejected'
+      ?'Access denied by the administrator'
+      :'Your account is awaiting admin approval';
+    return false;
+  }
+  document.getElementById('nav-users').style.display=me.isAdmin?'':'none';
+  return true;
+}
+
+async function loadAdminUsers(){
+  const el=document.getElementById('admin-user-list');
+  el.innerHTML='<div class="empty-state">Loading…</div>';
+  try{
+    const res=await api('/admin/users');
+    if(!res.ok){el.innerHTML='<div class="empty-state">Could not load users</div>';return}
+    const users=await res.json();
+    if(!users.length){el.innerHTML='<div class="empty-state"><div class="empty-icon">👥</div>No sign-ups yet.</div>';return}
+    el.innerHTML=users.map(u=>{
+      const d=new Date(u.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});
+      const approve=u.status!=='approved'?`<button class="user-btn approve" onclick="setUserStatus('${esc(u.user_id)}','approved')">Approve</button>`:'';
+      const reject=u.status!=='rejected'?`<button class="user-btn reject" onclick="setUserStatus('${esc(u.user_id)}','rejected')">Reject</button>`:'';
+      return`<div class="expense-item">
+        <div class="exp-info">
+          <div class="exp-cat">${esc(u.email||u.user_id)}</div>
+          <div class="exp-date">Joined ${d} · <span class="user-badge ${esc(u.status)}">${esc(u.status)}</span></div>
+        </div>
+        ${approve}${reject}
+      </div>`;
+    }).join('');
+  }catch(err){
+    console.error(err);
+    el.innerHTML='<div class="empty-state">Could not load users</div>';
+  }
+}
+
+async function setUserStatus(id,status){
+  try{
+    const res=await api('/admin/users/'+encodeURIComponent(id)+'/status',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({status})
+    });
+    if(res.ok){showToast('User '+status);loadAdminUsers()}
+    else{const d=await res.json().catch(()=>({}));showToast(d.error||'Update failed')}
+  }catch(err){console.error(err);showToast('Connection error')}
 }
 
 document.getElementById('auth-pass').addEventListener('keydown',e=>{if(e.key==='Enter')submitAuth()});
@@ -638,6 +717,7 @@ function showScreen(id, btn){
   document.getElementById('screen-'+id).classList.add('active');
   if(btn) btn.classList.add('active');
   if(id==='dashboard')buildDashboard();
+  if(id==='admin')loadAdminUsers();
 }
 
 function showToast(msg){
@@ -648,7 +728,12 @@ function showToast(msg){
 
 if(authToken){
   hideAuth();
-  renderRecent().catch(console.error);
+  (async()=>{
+    const me=await fetchMe();
+    if(applyMe(me,document.getElementById('auth-error'))){
+      await renderRecent();
+    }
+  })().catch(console.error);
 }else{
   showAuth();
 }
