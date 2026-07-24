@@ -22,9 +22,13 @@ app.use(express.static(__dirname));
 // The frontend never talks to Stack directly; these endpoints proxy
 // sign-up/sign-in/refresh, and requireAuth verifies the JWT via JWKS.
 const STACK_API = 'https://api.stack-auth.com/api/v1';
-// Neon's console labels these with a NEXT_PUBLIC_ prefix; accept either name
-const STACK_PROJECT_ID = process.env.STACK_PROJECT_ID || process.env.NEXT_PUBLIC_STACK_PROJECT_ID;
-const STACK_PUBLISHABLE_CLIENT_KEY = process.env.STACK_PUBLISHABLE_CLIENT_KEY || process.env.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY;
+// Neon's console shows these under framework-specific names; accept any
+const STACK_PROJECT_ID = process.env.STACK_PROJECT_ID
+  || process.env.NEXT_PUBLIC_STACK_PROJECT_ID
+  || process.env.VITE_STACK_PROJECT_ID;
+const STACK_PUBLISHABLE_CLIENT_KEY = process.env.STACK_PUBLISHABLE_CLIENT_KEY
+  || process.env.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY
+  || process.env.VITE_STACK_PUBLISHABLE_CLIENT_KEY;
 
 let jwksCache = null;
 function getJwks() {
