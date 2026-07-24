@@ -30,6 +30,15 @@ async function initDB() {
       );
       CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(date);
       CREATE INDEX IF NOT EXISTS idx_expenses_category ON expenses(category);
+      CREATE TABLE IF NOT EXISTS ai_usage (
+        id BIGSERIAL PRIMARY KEY,
+        model VARCHAR(64),
+        input_tokens INTEGER NOT NULL DEFAULT 0,
+        output_tokens INTEGER NOT NULL DEFAULT 0,
+        cost_usd NUMERIC(12, 8) NOT NULL DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_ai_usage_created ON ai_usage(created_at);
     `;
     await pool.query(query);
     
@@ -70,6 +79,26 @@ const EXPENSE_CATEGORIES = [
   'Shopping', 'Entertainment', 'Travel', 'Education', 'Rent', 'EMI',
   'Subscriptions', 'Gym & Fitness', 'Gifts', 'Personal Care', 'Other',
 ];
+
+// USD per 1M tokens; update when Google changes pricing
+const GEMINI_PRICING = {
+  'gemini-flash-latest': { in: 0.30, out: 2.50 },
+  'gemini-2.5-flash': { in: 0.30, out: 2.50 },
+  'gemini-2.0-flash': { in: 0.10, out: 0.40 },
+  'gemini-1.5-flash': { in: 0.075, out: 0.30 },
+};
+const DEFAULT_PRICING = { in: 0.30, out: 2.50 };
+
+function recordAiUsage(model, usageMetadata) {
+  const inputTokens = usageMetadata?.promptTokenCount || 0;
+  const outputTokens = usageMetadata?.candidatesTokenCount || 0;
+  const rates = GEMINI_PRICING[model] || DEFAULT_PRICING;
+  const cost = (inputTokens / 1e6) * rates.in + (outputTokens / 1e6) * rates.out;
+  pool.query(
+    'INSERT INTO ai_usage (model, input_tokens, output_tokens, cost_usd) VALUES ($1, $2, $3, $4)',
+    [model, inputTokens, outputTokens, cost]
+  ).catch(err => console.error('Failed to record AI usage:', err.message));
+}
 
 app.post('/api/scan-bill', async (req, res) => {
   const { image, mimeType } = req.body;
@@ -115,7 +144,9 @@ If the image is not a bill or receipt, respond with {"error": "not a bill"}.`;
 
     let geminiRes = null;
     let lastErr = '';
+    let usedModel = models[0];
     for (const model of models) {
+      usedModel = model;
       geminiRes = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${process.env.GEMINI_API_KEY}`,
         {
@@ -140,6 +171,8 @@ If the image is not a bill or receipt, respond with {"error": "not a bill"}.`;
     }
 
     const data = await geminiRes.json();
+    // Tokens are billed even if the image turns out not to be a bill
+    recordAiUsage(usedModel, data?.usageMetadata);
     const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!text) {
       return res.status(502).json({ error: 'AI returned an empty response' });
@@ -166,6 +199,25 @@ If the image is not a bill or receipt, respond with {"error": "not a bill"}.`;
   } catch (err) {
     console.error('Scan bill error:', err);
     res.status(500).json({ error: 'Failed to scan bill' });
+  }
+});
+
+// AI usage summary, grouped by month
+app.get('/api/ai-usage', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT TO_CHAR(created_at, 'YYYY-MM') AS month,
+             COUNT(*)::int AS scans,
+             COALESCE(SUM(input_tokens), 0)::int AS input_tokens,
+             COALESCE(SUM(output_tokens), 0)::int AS output_tokens,
+             COALESCE(SUM(cost_usd), 0)::float AS cost_usd
+      FROM ai_usage
+      GROUP BY 1
+      ORDER BY 1 DESC
+    `);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

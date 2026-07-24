@@ -76,6 +76,28 @@
   </div>
 
   <div class="chart-card">
+    <div class="chart-title"><span>Monthly summary</span></div>
+    <div class="filter-row" style="margin:10px 0 12px">
+      <span class="filter-label">Month:</span>
+      <select class="sum-select" id="sum-month" onchange="buildMonthlySummary()"></select>
+      <span class="filter-label">Year:</span>
+      <select class="sum-select" id="sum-year" onchange="buildMonthlySummary()"></select>
+    </div>
+    <div class="stat-grid" style="margin-bottom:0;grid-template-columns:1fr 1fr">
+      <div class="stat-card">
+        <div class="stat-label">Spend</div>
+        <div class="stat-val" id="sum-spend">₹0</div>
+        <div class="stat-sub" id="sum-spend-sub"></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">AI Scan Cost</div>
+        <div class="stat-val" id="sum-ai">$0.00</div>
+        <div class="stat-sub" id="sum-ai-sub"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="chart-card">
     <div class="chart-title"><span>Daily spending — this week</span></div>
     <div class="chart-wrap" style="height:180px"><canvas id="chart-week"></canvas></div>
   </div>
@@ -335,6 +357,48 @@ async function renderRecent(){
   }).join('');
 }
 
+let aiUsageCache=[];
+
+async function loadAiUsage(){
+  try{
+    const res=await fetch(API_URL+'/ai-usage');
+    if(res.ok)aiUsageCache=await res.json();
+  }catch(err){console.error('AI usage load error:',err)}
+  return aiUsageCache;
+}
+
+const MONTH_NAMES=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+function initSummaryFilters(){
+  const mSel=document.getElementById('sum-month');
+  const ySel=document.getElementById('sum-year');
+  const prevM=mSel.value,prevY=ySel.value;
+  const now=new Date();
+  const years=new Set([now.getFullYear()]);
+  expensesCache.forEach(e=>years.add(parseInt(e.date.slice(0,4))));
+  aiUsageCache.forEach(u=>years.add(parseInt(u.month.slice(0,4))));
+  mSel.innerHTML='<option value="">All</option>'+MONTH_NAMES.map((n,i)=>`<option value="${String(i+1).padStart(2,'0')}">${n}</option>`).join('');
+  ySel.innerHTML=[...years].sort((a,b)=>b-a).map(y=>`<option value="${y}">${y}</option>`).join('');
+  mSel.value=prevM!==''&&[...mSel.options].some(o=>o.value===prevM)?prevM:String(now.getMonth()+1).padStart(2,'0');
+  ySel.value=[...ySel.options].some(o=>o.value===prevY)?prevY:String(now.getFullYear());
+}
+
+function buildMonthlySummary(){
+  const m=document.getElementById('sum-month').value;
+  const y=document.getElementById('sum-year').value;
+  const prefix=m?`${y}-${m}`:`${y}`;
+  const exp=expensesCache.filter(e=>e.date.startsWith(prefix));
+  const spend=exp.reduce((s,e)=>s+e.amount,0);
+  document.getElementById('sum-spend').textContent=formatAmt(spend);
+  document.getElementById('sum-spend-sub').textContent=exp.length?`${exp.length} expense${exp.length>1?'s':''}`:'No expenses';
+  const usage=aiUsageCache.filter(u=>u.month.startsWith(prefix));
+  const scans=usage.reduce((s,u)=>s+u.scans,0);
+  const cost=usage.reduce((s,u)=>s+u.cost_usd,0);
+  const tokens=usage.reduce((s,u)=>s+u.input_tokens+u.output_tokens,0);
+  document.getElementById('sum-ai').textContent='$'+cost.toFixed(4);
+  document.getElementById('sum-ai-sub').textContent=scans?`${scans} scan${scans>1?'s':''} · ${tokens.toLocaleString('en-IN')} tokens`:'No scans';
+}
+
 let chartWeek,chartMonth,chartCat;
 
 function getWeekDates(){
@@ -355,6 +419,9 @@ let activePeriod='month';
 
 async function buildDashboard(){
   const arr=await loadExpenses();
+  await loadAiUsage();
+  initSummaryFilters();
+  buildMonthlySummary();
   console.log('Dashboard data:', arr);
   const today=todayStr();
   console.log('Today date:', today);
