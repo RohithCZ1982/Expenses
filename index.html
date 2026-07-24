@@ -18,7 +18,13 @@
     </div>
     <div class="form-row">
       <label class="form-label">Password</label>
-      <input class="form-input" type="password" id="auth-pass" placeholder="••••••••" autocomplete="current-password">
+      <div class="pass-wrap">
+        <input class="form-input" type="password" id="auth-pass" placeholder="••••••••" autocomplete="current-password">
+        <button type="button" class="pass-toggle" id="pass-toggle" onclick="togglePassword()" title="Show password">
+          <svg id="eye-open" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          <svg id="eye-closed" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+        </button>
+      </div>
     </div>
     <div class="auth-error" id="auth-error"></div>
     <button class="btn-add" id="auth-submit" onclick="submitAuth()">Sign In</button>
@@ -346,6 +352,15 @@ async function setUserStatus(id,status){
 }
 
 document.getElementById('auth-pass').addEventListener('keydown',e=>{if(e.key==='Enter')submitAuth()});
+
+function togglePassword(){
+  const input=document.getElementById('auth-pass');
+  const show=input.type==='password';
+  input.type=show?'text':'password';
+  document.getElementById('eye-open').style.display=show?'none':'';
+  document.getElementById('eye-closed').style.display=show?'':'none';
+  document.getElementById('pass-toggle').title=show?'Hide password':'Show password';
+}
 
 let expensesCache = [];
 

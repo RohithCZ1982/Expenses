@@ -57,6 +57,10 @@ body{font-family:var(--ff-body);background:var(--cream);color:var(--ink);font-si
 .auth-card{background:#fff;border:var(--border);border-radius:var(--radius);padding:28px 24px;box-shadow:0 1px 4px rgba(0,0,0,.06);width:100%;max-width:360px}
 .auth-card .screen-sub{margin-bottom:20px}
 .auth-error{color:var(--rose);font-size:12px;min-height:16px;margin-bottom:8px}
+.pass-wrap{position:relative}
+.pass-wrap .form-input{padding-right:38px}
+.pass-toggle{position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--ink3);padding:6px;display:flex;align-items:center}
+.pass-toggle:hover{color:var(--ink)}
 .auth-toggle{margin-top:14px;text-align:center;font-size:12px;color:var(--ink3)}
 .auth-toggle a{color:var(--gold);text-decoration:none;font-weight:500}
 .auth-toggle a:hover{text-decoration:underline}
