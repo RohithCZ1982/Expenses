@@ -51,6 +51,9 @@ async function neonAuthCall(path, options) {
   const text = await r.text();
   let data;
   try { data = JSON.parse(text); } catch { data = {}; }
+  if (!r.ok) {
+    console.error(`Neon Auth ${path} -> ${r.status}:`, text.slice(0, 500));
+  }
   return { ok: r.ok, status: r.status, data };
 }
 
@@ -77,12 +80,17 @@ async function handleCredentialAuth(req, res, path) {
       body: JSON.stringify(body),
     });
     if (!ok) {
-      const msg = data?.message || data?.error?.message || data?.error || 'Authentication failed';
-      return res.status(status >= 500 ? 502 : 401).json({ error: typeof msg === 'string' ? msg : 'Authentication failed' });
+      let msg = data?.message || data?.error?.message || data?.error;
+      if (typeof msg !== 'string' || !msg) {
+        msg = status === 404
+          ? 'Auth service returned 404 — the NEON_AUTH_URL looks wrong (it should end in /auth)'
+          : `Auth service error (${status})`;
+      }
+      return res.status(status >= 500 ? 502 : 401).json({ error: msg });
     }
     // data.token is the long-lived session token; the JWT is what our API verifies
     const jwt = await sessionToJwt(data.token);
-    if (!jwt) return res.status(502).json({ error: 'Could not obtain session token' });
+    if (!jwt) return res.status(502).json({ error: 'Signed in, but could not get an access token from the auth service' });
     if (data.user?.id) {
       try { await ensureAccess(data.user.id, email.toLowerCase()); }
       catch (err) { console.error('Could not record access row:', err.message); }
@@ -90,7 +98,7 @@ async function handleCredentialAuth(req, res, path) {
     res.json({ accessToken: jwt, refreshToken: data.token, userId: data.user?.id });
   } catch (err) {
     console.error('Auth error:', err);
-    res.status(500).json({ error: 'Authentication failed' });
+    res.status(502).json({ error: 'Could not reach the auth service — check NEON_AUTH_URL' });
   }
 }
 
@@ -500,6 +508,18 @@ app.delete('/api/expenses/:id', requireAuth, async (req, res) => {
 app.listen(PORT, async () => {
   console.log(`Server running on http://localhost:${PORT}`);
   console.log(`Neon Auth configured: ${NEON_AUTH_URL ? 'yes (' + NEON_AUTH_URL + ')' : 'NO — set NEON_AUTH_URL'}`);
+  if (NEON_AUTH_URL) {
+    try {
+      const r = await fetch(NEON_AUTH_JWKS_URL);
+      const body = await r.text();
+      const hasKeys = r.ok && /"keys"/.test(body);
+      console.log(hasKeys
+        ? 'Neon Auth check: OK — JWKS reachable'
+        : `Neon Auth check: FAILED — ${NEON_AUTH_JWKS_URL} returned ${r.status}; verify NEON_AUTH_URL matches the Auth URL in the Neon console`);
+    } catch (err) {
+      console.log(`Neon Auth check: FAILED — cannot reach ${NEON_AUTH_JWKS_URL} (${err.message}); verify NEON_AUTH_URL`);
+    }
+  }
   console.log(`Gemini configured: ${process.env.GEMINI_API_KEY ? 'yes' : 'NO — set GEMINI_API_KEY'}`);
   console.log(`Login approval: ${ADMIN_EMAIL ? 'on (admin: ' + ADMIN_EMAIL + ')' : 'OFF — set ADMIN_EMAIL to require approval for new users'}`);
   try {
