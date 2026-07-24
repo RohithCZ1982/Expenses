@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
+const { createRemoteJWKSet, jwtVerify } = require('jose');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -16,6 +17,115 @@ const pool = new Pool({
 app.use(cors());
 app.use(express.json({ limit: '15mb' }));
 app.use(express.static(__dirname));
+
+// ---- Neon Auth (Stack Auth) ----
+// The frontend never talks to Stack directly; these endpoints proxy
+// sign-up/sign-in/refresh, and requireAuth verifies the JWT via JWKS.
+const STACK_API = 'https://api.stack-auth.com/api/v1';
+const STACK_PROJECT_ID = process.env.STACK_PROJECT_ID;
+const STACK_PUBLISHABLE_CLIENT_KEY = process.env.STACK_PUBLISHABLE_CLIENT_KEY;
+
+let jwksCache = null;
+function getJwks() {
+  if (!jwksCache) {
+    jwksCache = createRemoteJWKSet(
+      new URL(`${STACK_API}/projects/${STACK_PROJECT_ID}/.well-known/jwks.json`)
+    );
+  }
+  return jwksCache;
+}
+
+function stackHeaders(extra = {}) {
+  return {
+    'Content-Type': 'application/json',
+    'x-stack-access-type': 'client',
+    'x-stack-project-id': STACK_PROJECT_ID,
+    'x-stack-publishable-client-key': STACK_PUBLISHABLE_CLIENT_KEY,
+    ...extra,
+  };
+}
+
+function authConfigured(res) {
+  if (!STACK_PROJECT_ID || !STACK_PUBLISHABLE_CLIENT_KEY) {
+    res.status(500).json({ error: 'Auth is not configured — set STACK_PROJECT_ID and STACK_PUBLISHABLE_CLIENT_KEY' });
+    return false;
+  }
+  return true;
+}
+
+async function stackAuthCall(res, path, body, extraHeaders) {
+  const r = await fetch(`${STACK_API}${path}`, {
+    method: 'POST',
+    headers: stackHeaders(extraHeaders),
+    body: JSON.stringify(body || {}),
+  });
+  const text = await r.text();
+  let data;
+  try { data = JSON.parse(text); } catch { data = { error: text }; }
+  if (!r.ok) {
+    const msg = data?.error?.message || data?.error || data?.message || 'Authentication failed';
+    res.status(r.status === 429 ? 429 : 401).json({ error: typeof msg === 'string' ? msg : 'Authentication failed' });
+    return null;
+  }
+  return data;
+}
+
+app.post('/api/auth/signup', async (req, res) => {
+  if (!authConfigured(res)) return;
+  const { email, password } = req.body || {};
+  if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
+  try {
+    const data = await stackAuthCall(res, '/auth/password/sign-up', {
+      email,
+      password,
+      verification_callback_url: `${req.protocol}://${req.get('host')}/`,
+    });
+    if (data) res.json({ accessToken: data.access_token, refreshToken: data.refresh_token, userId: data.user_id });
+  } catch (err) {
+    console.error('Signup error:', err);
+    res.status(500).json({ error: 'Sign up failed' });
+  }
+});
+
+app.post('/api/auth/signin', async (req, res) => {
+  if (!authConfigured(res)) return;
+  const { email, password } = req.body || {};
+  if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
+  try {
+    const data = await stackAuthCall(res, '/auth/password/sign-in', { email, password });
+    if (data) res.json({ accessToken: data.access_token, refreshToken: data.refresh_token, userId: data.user_id });
+  } catch (err) {
+    console.error('Signin error:', err);
+    res.status(500).json({ error: 'Sign in failed' });
+  }
+});
+
+app.post('/api/auth/refresh', async (req, res) => {
+  if (!authConfigured(res)) return;
+  const { refreshToken } = req.body || {};
+  if (!refreshToken) return res.status(401).json({ error: 'No refresh token' });
+  try {
+    const data = await stackAuthCall(res, '/auth/sessions/current/refresh', {}, { 'x-stack-refresh-token': refreshToken });
+    if (data) res.json({ accessToken: data.access_token });
+  } catch (err) {
+    console.error('Refresh error:', err);
+    res.status(500).json({ error: 'Session refresh failed' });
+  }
+});
+
+async function requireAuth(req, res, next) {
+  if (!authConfigured(res)) return;
+  const token = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  if (!token) return res.status(401).json({ error: 'Not signed in' });
+  try {
+    const { payload } = await jwtVerify(token, getJwks());
+    if (!payload.sub) throw new Error('No subject in token');
+    req.userId = payload.sub;
+    next();
+  } catch (err) {
+    res.status(401).json({ error: 'Session expired — please sign in again' });
+  }
+}
 
 // Initialize database table
 async function initDB() {
@@ -40,34 +150,42 @@ async function initDB() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
       CREATE INDEX IF NOT EXISTS idx_ai_usage_created ON ai_usage(created_at);
+      ALTER TABLE expenses ADD COLUMN IF NOT EXISTS user_id TEXT;
+      ALTER TABLE ai_usage ADD COLUMN IF NOT EXISTS user_id TEXT;
+      CREATE INDEX IF NOT EXISTS idx_expenses_user ON expenses(user_id, date);
+      CREATE INDEX IF NOT EXISTS idx_ai_usage_user ON ai_usage(user_id, created_at);
     `;
     await pool.query(query);
-    
-    // Clean up old data with wrong date format (timestamps instead of dates)
-    await pool.query('DELETE FROM expenses WHERE date > CURRENT_DATE');
-    
+
+    // Pre-auth records have no owner; remove them so every expense belongs
+    // to a signed-in user (idempotent — new rows always carry user_id)
+    await pool.query('DELETE FROM expenses WHERE user_id IS NULL');
+
     console.log('Database initialized');
   } catch (err) {
     console.error('DB init error:', err);
   }
 }
 
-// Get all expenses
-app.get('/api/expenses', async (req, res) => {
+// Get the signed-in user's expenses
+app.get('/api/expenses', requireAuth, async (req, res) => {
   try {
-    const result = await pool.query('SELECT id, TO_CHAR(date, \'YYYY-MM-DD\') as date, amount, category, note, created_at FROM expenses ORDER BY date DESC, created_at DESC');
+    const result = await pool.query(
+      'SELECT id, TO_CHAR(date, \'YYYY-MM-DD\') as date, amount, category, note, created_at FROM expenses WHERE user_id = $1 ORDER BY date DESC, created_at DESC',
+      [req.userId]
+    );
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Add expense
-app.post('/api/expenses', async (req, res) => {
+// Add expense for the signed-in user
+app.post('/api/expenses', requireAuth, async (req, res) => {
   const { id, date, amount, category, note } = req.body;
   try {
-    const query = 'INSERT INTO expenses (id, date, amount, category, note) VALUES ($1, $2::DATE, $3, $4, $5) RETURNING id, TO_CHAR(date, \'YYYY-MM-DD\') as date, amount, category, note';
-    const result = await pool.query(query, [id, date, amount, category, note || null]);
+    const query = 'INSERT INTO expenses (id, date, amount, category, note, user_id) VALUES ($1, $2::DATE, $3, $4, $5, $6) RETURNING id, TO_CHAR(date, \'YYYY-MM-DD\') as date, amount, category, note';
+    const result = await pool.query(query, [id, date, amount, category, note || null, req.userId]);
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -90,14 +208,14 @@ const GEMINI_PRICING = {
 };
 const DEFAULT_PRICING = { in: 0.30, out: 2.50 };
 
-function recordAiUsage(model, usageMetadata) {
+function recordAiUsage(userId, model, usageMetadata) {
   const inputTokens = usageMetadata?.promptTokenCount || 0;
   const outputTokens = usageMetadata?.candidatesTokenCount || 0;
   const rates = GEMINI_PRICING[model] || DEFAULT_PRICING;
   const cost = (inputTokens / 1e6) * rates.in + (outputTokens / 1e6) * rates.out;
   pool.query(
-    'INSERT INTO ai_usage (model, input_tokens, output_tokens, cost_usd) VALUES ($1, $2, $3, $4)',
-    [model, inputTokens, outputTokens, cost]
+    'INSERT INTO ai_usage (user_id, model, input_tokens, output_tokens, cost_usd) VALUES ($1, $2, $3, $4, $5)',
+    [userId, model, inputTokens, outputTokens, cost]
   ).catch(err => console.error('Failed to record AI usage:', err.message));
 }
 
@@ -132,7 +250,7 @@ function sniffFileType(base64) {
   return null;
 }
 
-app.post('/api/scan-bill', async (req, res) => {
+app.post('/api/scan-bill', requireAuth, async (req, res) => {
   const { image, mimeType } = req.body;
   if (!image) {
     return res.status(400).json({ error: 'No image provided' });
@@ -148,7 +266,7 @@ app.post('/api/scan-bill', async (req, res) => {
   if (!sniffed || (mt === 'application/pdf' ? sniffed !== 'pdf' : sniffed !== 'image')) {
     return res.status(400).json({ error: 'File content is not a valid image or PDF' });
   }
-  if (isRateLimited(req.ip)) {
+  if (isRateLimited(req.userId)) {
     return res.status(429).json({ error: 'Too many scans — please wait a few minutes' });
   }
   try {
@@ -226,7 +344,7 @@ JSON output only: {"amount": final total paid as number, "date": "YYYY-MM-DD" or
 
     const data = await geminiRes.json();
     // Tokens are billed even if the image turns out not to be a bill
-    recordAiUsage(usedModel, data?.usageMetadata);
+    recordAiUsage(req.userId, usedModel, data?.usageMetadata);
     const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!text) {
       return res.status(502).json({ error: 'AI returned an empty response' });
@@ -256,8 +374,8 @@ JSON output only: {"amount": final total paid as number, "date": "YYYY-MM-DD" or
   }
 });
 
-// AI usage summary, grouped by month
-app.get('/api/ai-usage', async (req, res) => {
+// AI usage summary for the signed-in user, grouped by month
+app.get('/api/ai-usage', requireAuth, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT TO_CHAR(created_at, 'YYYY-MM') AS month,
@@ -266,20 +384,21 @@ app.get('/api/ai-usage', async (req, res) => {
              COALESCE(SUM(output_tokens), 0)::int AS output_tokens,
              COALESCE(SUM(cost_usd), 0)::float AS cost_usd
       FROM ai_usage
+      WHERE user_id = $1
       GROUP BY 1
       ORDER BY 1 DESC
-    `);
+    `, [req.userId]);
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Delete expense
-app.delete('/api/expenses/:id', async (req, res) => {
+// Delete expense (only the signed-in user's own)
+app.delete('/api/expenses/:id', requireAuth, async (req, res) => {
   const { id } = req.params;
   try {
-    await pool.query('DELETE FROM expenses WHERE id = $1', [id]);
+    await pool.query('DELETE FROM expenses WHERE id = $1 AND user_id = $2', [id, req.userId]);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });

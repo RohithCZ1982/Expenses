@@ -8,9 +8,31 @@
 </head>
 <body>
 
+<div id="auth-screen" class="auth-screen">
+  <div class="auth-card">
+    <div class="screen-title">Expense Tracker</div>
+    <div class="screen-sub" id="auth-sub">Sign in to your account</div>
+    <div class="form-row">
+      <label class="form-label">Email</label>
+      <input class="form-input" type="email" id="auth-email" placeholder="you@example.com" autocomplete="email">
+    </div>
+    <div class="form-row">
+      <label class="form-label">Password</label>
+      <input class="form-input" type="password" id="auth-pass" placeholder="••••••••" autocomplete="current-password">
+    </div>
+    <div class="auth-error" id="auth-error"></div>
+    <button class="btn-add" id="auth-submit" onclick="submitAuth()">Sign In</button>
+    <div class="auth-toggle">
+      <span id="auth-toggle-text">New here?</span>
+      <a href="#" id="auth-toggle-link" onclick="toggleAuthMode();return false">Create an account</a>
+    </div>
+  </div>
+</div>
+
 <nav class="nav">
   <button class="nav-btn active" onclick="showScreen('entry',this)">+ Add Expense</button>
   <button class="nav-btn" onclick="showScreen('dashboard',this)">Analytics</button>
+  <button class="nav-btn nav-logout" onclick="logout()" title="Sign out">Sign out</button>
 </nav>
 
 <div id="screen-entry" class="screen active">
@@ -165,11 +187,92 @@ function getCatInfo(name){
   return c||{name,emoji:'💰',color:'#8a8480'};
 }
 
+let authToken=localStorage.getItem('authToken')||'';
+let refreshTok=localStorage.getItem('refreshToken')||'';
+let authMode='signin';
+
+function setTokens(access,refresh){
+  authToken=access||'';
+  if(refresh!==undefined)refreshTok=refresh||'';
+  localStorage.setItem('authToken',authToken);
+  localStorage.setItem('refreshToken',refreshTok);
+}
+
+function showAuth(){document.getElementById('auth-screen').classList.remove('hidden')}
+function hideAuth(){document.getElementById('auth-screen').classList.add('hidden')}
+
+// Authenticated fetch: attaches the token, transparently refreshes an
+// expired session once, and falls back to the login screen on failure
+async function api(path,opts={}){
+  opts.headers=Object.assign({},opts.headers||{},{Authorization:'Bearer '+authToken});
+  let res=await fetch(API_URL+path,opts);
+  if(res.status===401&&refreshTok){
+    try{
+      const rr=await fetch(API_URL+'/auth/refresh',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({refreshToken:refreshTok})});
+      if(rr.ok){
+        const d=await rr.json();
+        setTokens(d.accessToken);
+        opts.headers.Authorization='Bearer '+authToken;
+        res=await fetch(API_URL+path,opts);
+      }
+    }catch(e){console.error('Refresh failed:',e)}
+  }
+  if(res.status===401)showAuth();
+  return res;
+}
+
+function toggleAuthMode(){
+  authMode=authMode==='signin'?'signup':'signin';
+  document.getElementById('auth-submit').textContent=authMode==='signin'?'Sign In':'Create Account';
+  document.getElementById('auth-sub').textContent=authMode==='signin'?'Sign in to your account':'Create a new account';
+  document.getElementById('auth-toggle-text').textContent=authMode==='signin'?'New here?':'Already have an account?';
+  document.getElementById('auth-toggle-link').textContent=authMode==='signin'?'Create an account':'Sign in';
+  document.getElementById('auth-error').textContent='';
+}
+
+async function submitAuth(){
+  const email=document.getElementById('auth-email').value.trim();
+  const pass=document.getElementById('auth-pass').value;
+  const errEl=document.getElementById('auth-error');
+  if(!email||!pass){errEl.textContent='Enter email and password';return}
+  const btn=document.getElementById('auth-submit');
+  btn.disabled=true;errEl.textContent='';
+  try{
+    const res=await fetch(API_URL+'/auth/'+(authMode==='signin'?'signin':'signup'),{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({email,password:pass})
+    });
+    const data=await res.json();
+    if(!res.ok){errEl.textContent=data.error||'Authentication failed';return}
+    setTokens(data.accessToken,data.refreshToken);
+    document.getElementById('auth-pass').value='';
+    hideAuth();
+    await renderRecent();
+    showToast(authMode==='signin'?'Welcome back!':'Account created!');
+  }catch(err){
+    console.error(err);
+    errEl.textContent='Connection error';
+  }finally{
+    btn.disabled=false;
+  }
+}
+
+function logout(){
+  setTokens('','');
+  expensesCache=[];
+  aiUsageCache=[];
+  document.getElementById('recent-list').innerHTML='';
+  showAuth();
+}
+
+document.getElementById('auth-pass').addEventListener('keydown',e=>{if(e.key==='Enter')submitAuth()});
+
 let expensesCache = [];
 
 async function loadExpenses(){
   try {
-    const res = await fetch(API_URL + '/expenses');
+    const res = await api('/expenses');
     if (res.ok) {
       const data = await res.json();
       console.log('Loaded expenses:', data);
@@ -265,7 +368,7 @@ async function scanBill(input){
   label.textContent='Scanning bill…';
   try{
     const base64=isPdf?await readFileBase64(file):await compressImage(file);
-    const res=await fetch(API_URL+'/scan-bill',{
+    const res=await api('/scan-bill',{
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({image:base64,mimeType:isPdf?'application/pdf':'image/jpeg'})
@@ -295,7 +398,7 @@ async function addExpense(){
   if(!date||!amount||amount<=0||!cat){showToast('Please fill date, amount and category');return}
   
   try {
-    const res = await fetch(API_URL + '/expenses', {
+    const res = await api('/expenses', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: Date.now(), date, amount, category: cat, note })
@@ -317,7 +420,7 @@ async function addExpense(){
 
 async function deleteExpense(id){
   try {
-    const res = await fetch(API_URL + '/expenses/' + id, { method: 'DELETE' });
+    const res = await api('/expenses/' + id, { method: 'DELETE' });
     if (res.ok) {
       await renderRecent();
       showToast('Deleted');
@@ -361,7 +464,7 @@ let aiUsageCache=[];
 
 async function loadAiUsage(){
   try{
-    const res=await fetch(API_URL+'/ai-usage');
+    const res=await api('/ai-usage');
     if(res.ok)aiUsageCache=await res.json();
   }catch(err){console.error('AI usage load error:',err)}
   return aiUsageCache;
@@ -543,7 +646,12 @@ function showToast(msg){
   setTimeout(()=>t.classList.remove('show'),2200);
 }
 
-renderRecent().catch(console.error);
+if(authToken){
+  hideAuth();
+  renderRecent().catch(console.error);
+}else{
+  showAuth();
+}
 </script>
 </body>
 </html>
