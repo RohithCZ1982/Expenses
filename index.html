@@ -19,6 +19,12 @@
     <div class="screen-sub">Every rupee accounted for</div>
   </div>
   <div class="form-card">
+    <button class="btn-scan" id="btn-scan" onclick="document.getElementById('f-bill').click()">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+      <span id="btn-scan-label">Scan Bill with AI</span>
+    </button>
+    <input type="file" id="f-bill" accept="image/*" style="display:none" onchange="scanBill(this)">
+    <div class="scan-divider"><span>or enter manually</span></div>
     <div class="form-row">
       <label class="form-label">Date</label>
       <input class="form-input" type="date" id="f-date">
@@ -196,6 +202,57 @@ catInput.addEventListener('keydown',e=>{
 
 catInput.addEventListener('blur',()=>setTimeout(()=>acList.classList.remove('show'),150));
 function pickCat(name){catInput.value=name;acList.classList.remove('show')}
+
+function compressImage(file){
+  return new Promise((resolve,reject)=>{
+    const img=new Image();
+    img.onload=()=>{
+      const MAX=1600;
+      let{width:w,height:h}=img;
+      if(w>MAX||h>MAX){const s=MAX/Math.max(w,h);w=Math.round(w*s);h=Math.round(h*s)}
+      const canvas=document.createElement('canvas');
+      canvas.width=w;canvas.height=h;
+      canvas.getContext('2d').drawImage(img,0,0,w,h);
+      URL.revokeObjectURL(img.src);
+      const dataUrl=canvas.toDataURL('image/jpeg',0.85);
+      resolve(dataUrl.split(',')[1]);
+    };
+    img.onerror=()=>{URL.revokeObjectURL(img.src);reject(new Error('Could not read image'))};
+    img.src=URL.createObjectURL(file);
+  });
+}
+
+async function scanBill(input){
+  const file=input.files&&input.files[0];
+  input.value='';
+  if(!file)return;
+  const btn=document.getElementById('btn-scan');
+  const label=document.getElementById('btn-scan-label');
+  btn.disabled=true;
+  label.textContent='Scanning bill…';
+  try{
+    const base64=await compressImage(file);
+    const res=await fetch(API_URL+'/scan-bill',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({image:base64,mimeType:'image/jpeg'})
+    });
+    const data=await res.json();
+    if(!res.ok){showToast(data.error||'Could not scan bill');return}
+    if(data.date)document.getElementById('f-date').value=data.date;
+    if(data.amount)document.getElementById('f-amount').value=data.amount;
+    if(data.category)document.getElementById('f-cat').value=data.category;
+    if(data.owner)document.getElementById('f-note').value=data.owner;
+    await renderRecent();
+    showToast('Bill scanned! Review details and tap Add Expense');
+  }catch(err){
+    console.error(err);
+    showToast('Failed to scan bill');
+  }finally{
+    btn.disabled=false;
+    label.textContent='Scan Bill with AI';
+  }
+}
 
 async function addExpense(){
   const date=document.getElementById('f-date').value;

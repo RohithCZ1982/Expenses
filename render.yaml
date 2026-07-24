@@ -12,3 +12,5 @@ services:
         value: 3000
       - key: DATABASE_URL
         sync: false
+      - key: GEMINI_API_KEY
+        sync: false

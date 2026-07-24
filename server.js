@@ -13,7 +13,7 @@ const pool = new Pool({
 });
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '15mb' }));
 app.use(express.static(__dirname));
 
 // Initialize database table
@@ -61,6 +61,88 @@ app.post('/api/expenses', async (req, res) => {
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Scan a bill image with Gemini and extract expense details
+const EXPENSE_CATEGORIES = [
+  'Food & Dining', 'Groceries', 'Transport', 'Utilities', 'Health',
+  'Shopping', 'Entertainment', 'Travel', 'Education', 'Rent', 'EMI',
+  'Subscriptions', 'Gym & Fitness', 'Gifts', 'Personal Care', 'Other',
+];
+
+app.post('/api/scan-bill', async (req, res) => {
+  const { image, mimeType } = req.body;
+  if (!image) {
+    return res.status(400).json({ error: 'No image provided' });
+  }
+  if (!process.env.GEMINI_API_KEY) {
+    return res.status(500).json({ error: 'GEMINI_API_KEY is not configured on the server' });
+  }
+
+  const prompt = `You are an expense-tracking assistant. Analyze this bill/receipt image and extract:
+- "amount": the final total amount paid, as a number (no currency symbol). Use the grand total after taxes/discounts.
+- "date": the bill date in YYYY-MM-DD format. If no date is visible, use null.
+- "category": the best matching category from exactly this list: ${EXPENSE_CATEGORIES.join(', ')}.
+- "owner": the name of the merchant/shop/business that issued the bill (the bill owner). If a person's name is on the bill instead, use that. Use null if not found.
+
+Respond with ONLY a JSON object: {"amount": number|null, "date": "YYYY-MM-DD"|null, "category": string, "owner": string|null}
+If the image is not a bill or receipt, respond with {"error": "not a bill"}.`;
+
+  try {
+    const geminiRes = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{
+            parts: [
+              { text: prompt },
+              { inline_data: { mime_type: mimeType || 'image/jpeg', data: image } },
+            ],
+          }],
+          generationConfig: {
+            temperature: 0,
+            response_mime_type: 'application/json',
+          },
+        }),
+      }
+    );
+
+    if (!geminiRes.ok) {
+      const errBody = await geminiRes.text();
+      console.error('Gemini API error:', geminiRes.status, errBody);
+      return res.status(502).json({ error: 'AI service error (' + geminiRes.status + ')' });
+    }
+
+    const data = await geminiRes.json();
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) {
+      return res.status(502).json({ error: 'AI returned an empty response' });
+    }
+
+    let parsed;
+    try {
+      parsed = JSON.parse(text.replace(/^```json\s*|```\s*$/g, ''));
+    } catch (e) {
+      console.error('Failed to parse Gemini response:', text);
+      return res.status(502).json({ error: 'Could not parse AI response' });
+    }
+
+    if (parsed.error) {
+      return res.status(422).json({ error: 'This image does not look like a bill or receipt' });
+    }
+
+    res.json({
+      amount: typeof parsed.amount === 'number' ? parsed.amount : parseFloat(parsed.amount) || null,
+      date: /^\d{4}-\d{2}-\d{2}$/.test(parsed.date || '') ? parsed.date : null,
+      category: EXPENSE_CATEGORIES.includes(parsed.category) ? parsed.category : 'Other',
+      owner: parsed.owner || null,
+    });
+  } catch (err) {
+    console.error('Scan bill error:', err);
+    res.status(500).json({ error: 'Failed to scan bill' });
   }
 });
 

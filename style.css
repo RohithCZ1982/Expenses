@@ -45,6 +45,13 @@ body{font-family:var(--ff-body);background:var(--cream);color:var(--ink);font-si
 .btn-add:hover{background:var(--gold)}
 .btn-add:active{transform:scale(.98)}
 
+.btn-scan{display:flex;align-items:center;justify-content:center;gap:7px;width:100%;padding:11px;background:var(--gold3);border:1px solid var(--gold);border-radius:8px;font-family:var(--ff-body);font-size:13px;font-weight:500;color:var(--ink);cursor:pointer;transition:all .15s;margin-bottom:14px}
+.btn-scan:hover{background:var(--gold2)}
+.btn-scan:active{transform:scale(.98)}
+.btn-scan:disabled{opacity:.6;cursor:wait}
+.scan-divider{display:flex;align-items:center;gap:10px;margin-bottom:14px;color:var(--ink3);font-size:11px;letter-spacing:.04em;text-transform:uppercase}
+.scan-divider::before,.scan-divider::after{content:'';flex:1;height:1px;background:var(--cream3)}
+
 .section-title{font-size:11px;font-weight:500;letter-spacing:.06em;color:var(--ink3);text-transform:uppercase;margin:20px 0 10px}
 .expense-list{display:flex;flex-direction:column;gap:8px}
 .expense-item{background:#fff;border:var(--border);border-radius:var(--radius);padding:12px 14px;display:flex;align-items:center;gap:10px;transition:box-shadow .15s}
