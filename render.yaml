@@ -14,7 +14,5 @@ services:
         sync: false
       - key: GEMINI_API_KEY
         sync: false
-      - key: STACK_PROJECT_ID
-        sync: false
-      - key: STACK_PUBLISHABLE_CLIENT_KEY
+      - key: NEON_AUTH_URL
         sync: false

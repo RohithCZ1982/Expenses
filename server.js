@@ -18,100 +18,89 @@ app.use(cors());
 app.use(express.json({ limit: '15mb' }));
 app.use(express.static(__dirname));
 
-// ---- Neon Auth (Stack Auth) ----
-// The frontend never talks to Stack directly; these endpoints proxy
-// sign-up/sign-in/refresh, and requireAuth verifies the JWT via JWKS.
-const STACK_API = 'https://api.stack-auth.com/api/v1';
-// Neon's console shows these under framework-specific names; accept any
-const STACK_PROJECT_ID = process.env.STACK_PROJECT_ID
-  || process.env.NEXT_PUBLIC_STACK_PROJECT_ID
-  || process.env.VITE_STACK_PROJECT_ID;
-const STACK_PUBLISHABLE_CLIENT_KEY = process.env.STACK_PUBLISHABLE_CLIENT_KEY
-  || process.env.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY
-  || process.env.VITE_STACK_PUBLISHABLE_CLIENT_KEY;
+// ---- Neon Auth (managed Better Auth) ----
+// The Neon console's Auth page provides an Auth URL (base of the managed
+// Better Auth REST service) and a JWKS URL. The frontend never talks to it
+// directly; these endpoints proxy sign-up/sign-in/refresh, and requireAuth
+// verifies the JWT locally against the JWKS.
+const NEON_AUTH_URL = (process.env.NEON_AUTH_URL
+  || process.env.NEON_AUTH_BASE_URL
+  || process.env.VITE_NEON_AUTH_URL
+  || '').replace(/\/+$/, '');
+const NEON_AUTH_JWKS_URL = process.env.NEON_AUTH_JWKS_URL
+  || (NEON_AUTH_URL ? `${NEON_AUTH_URL}/.well-known/jwks.json` : '');
 
 let jwksCache = null;
 function getJwks() {
   if (!jwksCache) {
-    jwksCache = createRemoteJWKSet(
-      new URL(`${STACK_API}/projects/${STACK_PROJECT_ID}/.well-known/jwks.json`)
-    );
+    jwksCache = createRemoteJWKSet(new URL(NEON_AUTH_JWKS_URL));
   }
   return jwksCache;
 }
 
-function stackHeaders(extra = {}) {
-  return {
-    'Content-Type': 'application/json',
-    'x-stack-access-type': 'client',
-    'x-stack-project-id': STACK_PROJECT_ID,
-    'x-stack-publishable-client-key': STACK_PUBLISHABLE_CLIENT_KEY,
-    ...extra,
-  };
-}
-
 function authConfigured(res) {
-  if (!STACK_PROJECT_ID || !STACK_PUBLISHABLE_CLIENT_KEY) {
-    res.status(500).json({ error: 'Auth is not configured — set STACK_PROJECT_ID and STACK_PUBLISHABLE_CLIENT_KEY' });
+  if (!NEON_AUTH_URL) {
+    res.status(500).json({ error: 'Auth is not configured — set NEON_AUTH_URL to your Neon Auth URL' });
     return false;
   }
   return true;
 }
 
-async function stackAuthCall(res, path, body, extraHeaders) {
-  const r = await fetch(`${STACK_API}${path}`, {
-    method: 'POST',
-    headers: stackHeaders(extraHeaders),
-    body: JSON.stringify(body || {}),
-  });
+async function neonAuthCall(path, options) {
+  const r = await fetch(`${NEON_AUTH_URL}${path}`, options);
   const text = await r.text();
   let data;
-  try { data = JSON.parse(text); } catch { data = { error: text }; }
-  if (!r.ok) {
-    const msg = data?.error?.message || data?.error || data?.message || 'Authentication failed';
-    res.status(r.status === 429 ? 429 : 401).json({ error: typeof msg === 'string' ? msg : 'Authentication failed' });
-    return null;
-  }
-  return data;
+  try { data = JSON.parse(text); } catch { data = {}; }
+  return { ok: r.ok, status: r.status, data };
 }
 
-app.post('/api/auth/signup', async (req, res) => {
-  if (!authConfigured(res)) return;
-  const { email, password } = req.body || {};
-  if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
-  try {
-    const data = await stackAuthCall(res, '/auth/password/sign-up', {
-      email,
-      password,
-      verification_callback_url: `${req.protocol}://${req.get('host')}/`,
-    });
-    if (data) res.json({ accessToken: data.access_token, refreshToken: data.refresh_token, userId: data.user_id });
-  } catch (err) {
-    console.error('Signup error:', err);
-    res.status(500).json({ error: 'Sign up failed' });
-  }
-});
+// Exchange a Better Auth session token for a short-lived JWT
+async function sessionToJwt(sessionToken) {
+  const { ok, data } = await neonAuthCall('/token', {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${sessionToken}` },
+  });
+  return ok ? data.token : null;
+}
 
-app.post('/api/auth/signin', async (req, res) => {
+async function handleCredentialAuth(req, res, path) {
   if (!authConfigured(res)) return;
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
   try {
-    const data = await stackAuthCall(res, '/auth/password/sign-in', { email, password });
-    if (data) res.json({ accessToken: data.access_token, refreshToken: data.refresh_token, userId: data.user_id });
+    const body = path === '/sign-up/email'
+      ? { name: email.split('@')[0], email, password }
+      : { email, password };
+    const { ok, status, data } = await neonAuthCall(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!ok) {
+      const msg = data?.message || data?.error?.message || data?.error || 'Authentication failed';
+      return res.status(status >= 500 ? 502 : 401).json({ error: typeof msg === 'string' ? msg : 'Authentication failed' });
+    }
+    // data.token is the long-lived session token; the JWT is what our API verifies
+    const jwt = await sessionToJwt(data.token);
+    if (!jwt) return res.status(502).json({ error: 'Could not obtain session token' });
+    res.json({ accessToken: jwt, refreshToken: data.token, userId: data.user?.id });
   } catch (err) {
-    console.error('Signin error:', err);
-    res.status(500).json({ error: 'Sign in failed' });
+    console.error('Auth error:', err);
+    res.status(500).json({ error: 'Authentication failed' });
   }
-});
+}
+
+app.post('/api/auth/signup', (req, res) => handleCredentialAuth(req, res, '/sign-up/email'));
+app.post('/api/auth/signin', (req, res) => handleCredentialAuth(req, res, '/sign-in/email'));
 
 app.post('/api/auth/refresh', async (req, res) => {
   if (!authConfigured(res)) return;
   const { refreshToken } = req.body || {};
   if (!refreshToken) return res.status(401).json({ error: 'No refresh token' });
   try {
-    const data = await stackAuthCall(res, '/auth/sessions/current/refresh', {}, { 'x-stack-refresh-token': refreshToken });
-    if (data) res.json({ accessToken: data.access_token });
+    const jwt = await sessionToJwt(refreshToken);
+    if (!jwt) return res.status(401).json({ error: 'Session expired — please sign in again' });
+    res.json({ accessToken: jwt });
   } catch (err) {
     console.error('Refresh error:', err);
     res.status(500).json({ error: 'Session refresh failed' });
@@ -412,7 +401,7 @@ app.delete('/api/expenses/:id', requireAuth, async (req, res) => {
 
 app.listen(PORT, async () => {
   console.log(`Server running on http://localhost:${PORT}`);
-  console.log(`Neon Auth configured: ${STACK_PROJECT_ID && STACK_PUBLISHABLE_CLIENT_KEY ? 'yes' : 'NO — set STACK_PROJECT_ID and STACK_PUBLISHABLE_CLIENT_KEY'}`);
+  console.log(`Neon Auth configured: ${NEON_AUTH_URL ? 'yes (' + NEON_AUTH_URL + ')' : 'NO — set NEON_AUTH_URL'}`);
   console.log(`Gemini configured: ${process.env.GEMINI_API_KEY ? 'yes' : 'NO — set GEMINI_API_KEY'}`);
   try {
     await initDB();
