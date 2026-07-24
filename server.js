@@ -22,8 +22,9 @@ app.use(express.static(__dirname));
 // The frontend never talks to Stack directly; these endpoints proxy
 // sign-up/sign-in/refresh, and requireAuth verifies the JWT via JWKS.
 const STACK_API = 'https://api.stack-auth.com/api/v1';
-const STACK_PROJECT_ID = process.env.STACK_PROJECT_ID;
-const STACK_PUBLISHABLE_CLIENT_KEY = process.env.STACK_PUBLISHABLE_CLIENT_KEY;
+// Neon's console labels these with a NEXT_PUBLIC_ prefix; accept either name
+const STACK_PROJECT_ID = process.env.STACK_PROJECT_ID || process.env.NEXT_PUBLIC_STACK_PROJECT_ID;
+const STACK_PUBLISHABLE_CLIENT_KEY = process.env.STACK_PUBLISHABLE_CLIENT_KEY || process.env.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY;
 
 let jwksCache = null;
 function getJwks() {
@@ -407,6 +408,8 @@ app.delete('/api/expenses/:id', requireAuth, async (req, res) => {
 
 app.listen(PORT, async () => {
   console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`Neon Auth configured: ${STACK_PROJECT_ID && STACK_PUBLISHABLE_CLIENT_KEY ? 'yes' : 'NO — set STACK_PROJECT_ID and STACK_PUBLISHABLE_CLIENT_KEY'}`);
+  console.log(`Gemini configured: ${process.env.GEMINI_API_KEY ? 'yes' : 'NO — set GEMINI_API_KEY'}`);
   try {
     await initDB();
   } catch (err) {
