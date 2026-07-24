@@ -508,16 +508,21 @@ JSON output only: {"amount": final total paid as number, "date": "YYYY-MM-DD" or
     const data = await geminiRes.json();
     // Tokens are billed even if the image turns out not to be a bill
     recordAiUsage(req.userId, usedModel, data?.usageMetadata);
-    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    // Thinking models can emit multiple parts; take the first with text
+    const parts = data?.candidates?.[0]?.content?.parts || [];
+    const text = parts.map(p => p?.text).find(t => t);
     if (!text) {
+      console.error('Gemini response had no text. finishReason:',
+        data?.candidates?.[0]?.finishReason, 'parts:', JSON.stringify(parts).slice(0, 300));
       return res.status(502).json({ error: 'AI returned an empty response' });
     }
 
     let parsed;
     try {
       parsed = JSON.parse(text.replace(/^```json\s*|```\s*$/g, ''));
+      if (Array.isArray(parsed)) parsed = parsed[0] || {};
     } catch (e) {
-      console.error('Failed to parse Gemini response:', text);
+      console.error('Failed to parse Gemini response:', text.slice(0, 500));
       return res.status(502).json({ error: 'Could not parse AI response' });
     }
 
@@ -525,11 +530,31 @@ JSON output only: {"amount": final total paid as number, "date": "YYYY-MM-DD" or
       return res.status(422).json({ error: 'This image does not look like a bill or receipt' });
     }
 
+    // Coerce amounts like "₹1,234.50" and dates like 24/07/2026 or 24-07-2026
+    const amount = typeof parsed.amount === 'number'
+      ? parsed.amount
+      : parseFloat(String(parsed.amount ?? '').replace(/[^\d.]/g, '')) || null;
+    let date = null;
+    const rawDate = String(parsed.date || '');
+    if (/^\d{4}-\d{2}-\d{2}$/.test(rawDate)) {
+      date = rawDate;
+    } else {
+      const dmy = rawDate.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})$/);
+      if (dmy) date = `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
+    }
+    const owner = typeof parsed.owner === 'string' && parsed.owner.trim() && parsed.owner !== 'null'
+      ? parsed.owner.trim() : null;
+
+    if (amount == null && !date && !owner) {
+      console.error('Scan extracted nothing useful. Raw response:', text.slice(0, 500));
+      return res.status(422).json({ error: 'Could not read details from this bill — try a clearer, closer photo' });
+    }
+
     res.json({
-      amount: typeof parsed.amount === 'number' ? parsed.amount : parseFloat(parsed.amount) || null,
-      date: /^\d{4}-\d{2}-\d{2}$/.test(parsed.date || '') ? parsed.date : null,
+      amount,
+      date,
       category: EXPENSE_CATEGORIES.includes(parsed.category) ? parsed.category : 'Other',
-      owner: parsed.owner || null,
+      owner,
     });
   } catch (err) {
     console.error('Scan bill error:', err);
