@@ -448,46 +448,59 @@ JSON output only: {"amount": final total paid as number, "date": "YYYY-MM-DD" or
 
   try {
     // maxOutputTokens caps the (most expensive) output side; thinkingBudget 0
-    // disables reasoning tokens on 2.5-era models, which 1.x/2.0 don't accept
-    const makeBody = (model) => JSON.stringify({
+    // skips reasoning tokens where supported. Some models reject parts of
+    // this config with a 400, so each model gets a lean retry without the
+    // optional fields before falling through to the next model.
+    const makeBody = (model, lean) => JSON.stringify({
       contents: [{
         parts: [
           { text: prompt },
           { inline_data: { mime_type: mt, data: image } },
         ],
       }],
-      generationConfig: {
-        temperature: 0,
-        response_mime_type: 'application/json',
-        maxOutputTokens: 200,
-        ...(/2\.5|latest/.test(model) ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
-      },
+      generationConfig: lean
+        ? { temperature: 0, response_mime_type: 'application/json' }
+        : {
+            temperature: 0,
+            response_mime_type: 'application/json',
+            maxOutputTokens: 200,
+            ...(/2\.5|latest/.test(model) ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
+          },
     });
+
+    const attempts = [];
+    for (const model of models) {
+      attempts.push([model, false], [model, true]);
+    }
 
     let geminiRes = null;
     let lastErr = '';
     let usedModel = models[0];
-    for (const model of models) {
+    for (const [model, lean] of attempts) {
       usedModel = model;
       geminiRes = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${process.env.GEMINI_API_KEY}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: makeBody(model),
+          body: makeBody(model, lean),
         }
       );
       if (geminiRes.ok) break;
       lastErr = await geminiRes.text();
-      console.error(`Gemini API error (model ${model}):`, geminiRes.status, lastErr);
-      if (geminiRes.status !== 404) break;
+      console.error(`Gemini API error (model ${model}${lean ? ', lean config' : ''}):`, geminiRes.status, lastErr);
+      // 400: config or key problem — retry lean, then next model; 404: model
+      // unknown — next model; anything else is not worth retrying
+      if (geminiRes.status !== 404 && geminiRes.status !== 400) break;
     }
 
     if (!geminiRes.ok) {
+      let apiMsg = '';
+      try { apiMsg = JSON.parse(lastErr)?.error?.message || ''; } catch {}
       const hint = geminiRes.status === 404
         ? ' — no available Gemini model found; set GEMINI_MODEL env var to a model your API key supports'
-        : geminiRes.status === 400 && /API key/i.test(lastErr)
-          ? ' — check that GEMINI_API_KEY is valid'
+        : apiMsg
+          ? ' — ' + apiMsg.slice(0, 180)
           : '';
       return res.status(502).json({ error: 'AI service error (' + geminiRes.status + ')' + hint });
     }
