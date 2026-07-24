@@ -93,31 +93,50 @@ app.post('/api/scan-bill', async (req, res) => {
 Respond with ONLY a JSON object: {"amount": number|null, "date": "YYYY-MM-DD"|null, "category": string, "owner": string|null}
 If the image is not a bill or receipt, respond with {"error": "not a bill"}.`;
 
+  // Try models in order — Google retires model names over time, so fall
+  // through to the next candidate on 404. GEMINI_MODEL env var overrides.
+  const models = process.env.GEMINI_MODEL
+    ? [process.env.GEMINI_MODEL]
+    : ['gemini-flash-latest', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+
   try {
-    const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{
-            parts: [
-              { text: prompt },
-              { inline_data: { mime_type: mt, data: image } },
-            ],
-          }],
-          generationConfig: {
-            temperature: 0,
-            response_mime_type: 'application/json',
-          },
-        }),
-      }
-    );
+    const requestBody = JSON.stringify({
+      contents: [{
+        parts: [
+          { text: prompt },
+          { inline_data: { mime_type: mt, data: image } },
+        ],
+      }],
+      generationConfig: {
+        temperature: 0,
+        response_mime_type: 'application/json',
+      },
+    });
+
+    let geminiRes = null;
+    let lastErr = '';
+    for (const model of models) {
+      geminiRes = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${process.env.GEMINI_API_KEY}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: requestBody,
+        }
+      );
+      if (geminiRes.ok) break;
+      lastErr = await geminiRes.text();
+      console.error(`Gemini API error (model ${model}):`, geminiRes.status, lastErr);
+      if (geminiRes.status !== 404) break;
+    }
 
     if (!geminiRes.ok) {
-      const errBody = await geminiRes.text();
-      console.error('Gemini API error:', geminiRes.status, errBody);
-      return res.status(502).json({ error: 'AI service error (' + geminiRes.status + ')' });
+      const hint = geminiRes.status === 404
+        ? ' — no available Gemini model found; set GEMINI_MODEL env var to a model your API key supports'
+        : geminiRes.status === 400 && /API key/i.test(lastErr)
+          ? ' — check that GEMINI_API_KEY is valid'
+          : '';
+      return res.status(502).json({ error: 'AI service error (' + geminiRes.status + ')' + hint });
     }
 
     const data = await geminiRes.json();
