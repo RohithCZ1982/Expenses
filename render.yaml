@@ -17,4 +17,4 @@ services:
       - key: NEON_AUTH_URL
         sync: false
       - key: ADMIN_EMAIL
-        sync: false
+        value: rohith.mps@gmail.com
