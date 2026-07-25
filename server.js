@@ -260,10 +260,12 @@ async function verifyJwt(req, res, next) {
 
 function requireApproved(req, res, next) {
   if (ADMIN_EMAIL && req.accessStatus !== 'approved') {
+    const messages = {
+      rejected: 'Access denied by the administrator',
+      deactivated: 'Your account has been deactivated — contact the administrator',
+    };
     return res.status(403).json({
-      error: req.accessStatus === 'rejected'
-        ? 'Access denied by the administrator'
-        : 'Your account is awaiting admin approval',
+      error: messages[req.accessStatus] || 'Your account is awaiting admin approval',
     });
   }
   next();
@@ -291,6 +293,7 @@ app.get('/api/admin/users', verifyJwt, requireAdmin, async (req, res) => {
   try {
     const { rows } = await pool.query(`
       SELECT ua.user_id, ua.email, ua.status, ua.created_at,
+             COALESCE(ua.scan_limit, ${DEFAULT_SCAN_LIMIT})::int AS scan_limit,
              COALESCE(u.scans, 0) AS scans,
              COALESCE(u.cost, 0)::float AS cost_usd,
              COALESCE(u.month_scans, 0) AS month_scans,
@@ -315,13 +318,31 @@ app.get('/api/admin/users', verifyJwt, requireAdmin, async (req, res) => {
 
 app.post('/api/admin/users/:id/status', verifyJwt, requireAdmin, async (req, res) => {
   const { status } = req.body || {};
-  if (!['approved', 'rejected', 'pending'].includes(status)) {
-    return res.status(400).json({ error: 'Status must be approved, rejected or pending' });
+  if (!['approved', 'rejected', 'pending', 'deactivated'].includes(status)) {
+    return res.status(400).json({ error: 'Status must be approved, rejected, pending or deactivated' });
   }
   try {
     const { rowCount } = await pool.query(
       'UPDATE user_access SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE user_id = $2',
       [status, req.params.id]
+    );
+    if (!rowCount) return res.status(404).json({ error: 'User not found' });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin: set a user's monthly scan limit
+app.post('/api/admin/users/:id/limit', verifyJwt, requireAdmin, async (req, res) => {
+  const limit = parseInt(req.body?.limit, 10);
+  if (!Number.isInteger(limit) || limit < 0 || limit > 100000) {
+    return res.status(400).json({ error: 'Limit must be a number between 0 and 100000' });
+  }
+  try {
+    const { rowCount } = await pool.query(
+      'UPDATE user_access SET scan_limit = $1, updated_at = CURRENT_TIMESTAMP WHERE user_id = $2',
+      [limit, req.params.id]
     );
     if (!rowCount) return res.status(404).json({ error: 'User not found' });
     res.json({ success: true });
@@ -362,6 +383,7 @@ async function initDB() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+      ALTER TABLE user_access ADD COLUMN IF NOT EXISTS scan_limit INTEGER;
       CREATE INDEX IF NOT EXISTS idx_expenses_user ON expenses(user_id, date);
       CREATE INDEX IF NOT EXISTS idx_ai_usage_user ON ai_usage(user_id, created_at);
     `;
@@ -432,6 +454,7 @@ function recordAiUsage(userId, model, usageMetadata) {
 // Guardrails: per-IP rate limit, monthly budget cap, and payload sniffing
 const SCAN_WINDOW_MS = 15 * 60 * 1000;
 const SCAN_MAX_PER_WINDOW = 10;
+const DEFAULT_SCAN_LIMIT = parseInt(process.env.DEFAULT_SCAN_LIMIT || '10', 10);
 const MAX_BASE64_LENGTH = 12 * 1024 * 1024; // ~9 MB binary
 const AI_MONTHLY_BUDGET_USD = parseFloat(process.env.AI_MONTHLY_BUDGET_USD || '5');
 const scanHits = new Map();
@@ -478,6 +501,25 @@ app.post('/api/scan-bill', requireAuth, async (req, res) => {
   }
   if (isRateLimited(req.userId)) {
     return res.status(429).json({ error: 'Too many scans — please wait a few minutes' });
+  }
+  // Monthly per-user scan allowance (admin-adjustable, admin exempt)
+  if (!req.isAdmin) {
+    try {
+      const { rows } = await pool.query(
+        `SELECT COALESCE((SELECT scan_limit FROM user_access WHERE user_id = $1), $2)::int AS lim,
+                (SELECT COUNT(*) FROM ai_usage WHERE user_id = $1
+                  AND created_at >= DATE_TRUNC('month', CURRENT_DATE))::int AS used`,
+        [req.userId, DEFAULT_SCAN_LIMIT]
+      );
+      const { lim, used } = rows[0];
+      if (used >= lim) {
+        return res.status(429).json({
+          error: `You have used all ${lim} scans for this month — contact the admin to increase your limit`,
+        });
+      }
+    } catch (err) {
+      console.error('Scan limit check failed (allowing scan):', err.message);
+    }
   }
   try {
     const { rows } = await pool.query(

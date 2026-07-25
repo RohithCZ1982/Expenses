@@ -75,6 +75,7 @@ body{font-family:var(--ff-body);background:var(--cream);color:var(--ink);font-si
 .user-badge.approved{background:#e2f2e9;color:var(--teal)}
 .user-badge.pending{background:var(--gold3);color:#7a5c2a}
 .user-badge.rejected{background:#f7e3df;color:var(--rose)}
+.user-badge.deactivated{background:var(--cream3);color:var(--ink3)}
 .user-btn{padding:6px 10px;border-radius:7px;border:var(--border);background:#fff;font-family:var(--ff-body);font-size:11px;font-weight:500;color:var(--ink2);cursor:pointer;margin-left:6px;transition:all .15s}
 .user-btn.approve:hover{background:var(--teal);color:#fff;border-color:var(--teal)}
 .user-btn.reject:hover{background:var(--rose);color:#fff;border-color:var(--rose)}
