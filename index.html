@@ -1001,6 +1001,10 @@ function buildCategorySection(arr,period){
   else if(period==='week'){const wd=getWeekDates();filtered=arr.filter(e=>wd.includes(e.date))}
   else if(period==='month')filtered=arr.filter(e=>e.date.startsWith(todayStr2.slice(0,7)));
 
+  const fr=document.getElementById('filter-row');
+  fr.innerHTML='<span class="filter-label">Period:</span>'+
+    ['today','week','month','all'].map(p=>`<button class="filter-chip${p===period?' active':''}" onclick="setPeriod('${p}')">${p.charAt(0).toUpperCase()+p.slice(1)}</button>`).join('');
+
   const catMap={};
   filtered.forEach(e=>{catMap[e.category]=(catMap[e.category]||0)+e.amount});
   const cats=Object.entries(catMap).sort((a,b)=>b[1]-a[1]);
@@ -1032,10 +1036,6 @@ function buildCategorySection(arr,period){
       <td><div class="cat-bar-wrap"><div class="cat-bar" style="width:${pct}%;background:${col}"></div></div></td>
     </tr>`;
   }).join('');
-
-  const fr=document.getElementById('filter-row');
-  fr.innerHTML='<span class="filter-label">Period:</span>'+
-    ['today','week','month','all'].map(p=>`<button class="filter-chip${p===period?' active':''}" onclick="setPeriod('${p}')">${p.charAt(0).toUpperCase()+p.slice(1)}</button>`).join('');
 }
 
 async function setPeriod(p){activePeriod=p;buildCategorySection(await loadExpenses(),p)}
