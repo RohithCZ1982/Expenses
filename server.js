@@ -155,6 +155,51 @@ async function handleCredentialAuth(req, res, path) {
 app.post('/api/auth/signup', (req, res) => handleCredentialAuth(req, res, '/sign-up/email'));
 app.post('/api/auth/signin', (req, res) => handleCredentialAuth(req, res, '/sign-in/email'));
 
+// Send a password-reset email; the link returns to the app with ?token=
+app.post('/api/auth/forgot', async (req, res) => {
+  if (!authConfigured(res)) return;
+  const { email } = req.body || {};
+  if (!email) return res.status(400).json({ error: 'Email is required' });
+  try {
+    const origin = requestOrigin(req);
+    const headers = { 'Content-Type': 'application/json', Origin: origin };
+    const body = JSON.stringify({ email, redirectTo: `${origin}/` });
+    let r = await neonAuthCall('/request-password-reset', { method: 'POST', headers, body });
+    if (r.status === 404) {
+      r = await neonAuthCall('/forget-password', { method: 'POST', headers, body });
+    }
+    if (!r.ok) {
+      const msg = r.data?.message || `Auth service error (${r.status})`;
+      return res.status(502).json({ error: msg });
+    }
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Forgot password error:', err);
+    res.status(502).json({ error: 'Could not reach the auth service' });
+  }
+});
+
+app.post('/api/auth/reset', async (req, res) => {
+  if (!authConfigured(res)) return;
+  const { token, newPassword } = req.body || {};
+  if (!token || !newPassword) return res.status(400).json({ error: 'Token and new password are required' });
+  try {
+    const r = await neonAuthCall('/reset-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: requestOrigin(req) },
+      body: JSON.stringify({ newPassword, token }),
+    });
+    if (!r.ok) {
+      const msg = r.data?.message || 'Reset link is invalid or expired — request a new one';
+      return res.status(401).json({ error: msg });
+    }
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Reset password error:', err);
+    res.status(502).json({ error: 'Could not reach the auth service' });
+  }
+});
+
 app.post('/api/auth/refresh', async (req, res) => {
   if (!authConfigured(res)) return;
   const { refreshToken } = req.body || {};
@@ -241,12 +286,27 @@ app.get('/api/me', verifyJwt, (req, res) => {
   });
 });
 
-// Admin: list users and change their access status
+// Admin: list users with their AI usage cost, and change access status
 app.get('/api/admin/users', verifyJwt, requireAdmin, async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      'SELECT user_id, email, status, created_at FROM user_access ORDER BY created_at DESC'
-    );
+    const { rows } = await pool.query(`
+      SELECT ua.user_id, ua.email, ua.status, ua.created_at,
+             COALESCE(u.scans, 0) AS scans,
+             COALESCE(u.cost, 0)::float AS cost_usd,
+             COALESCE(u.month_scans, 0) AS month_scans,
+             COALESCE(u.month_cost, 0)::float AS month_cost_usd
+      FROM user_access ua
+      LEFT JOIN (
+        SELECT user_id,
+               COUNT(*)::int AS scans,
+               SUM(cost_usd) AS cost,
+               COUNT(*) FILTER (WHERE created_at >= DATE_TRUNC('month', CURRENT_DATE))::int AS month_scans,
+               COALESCE(SUM(cost_usd) FILTER (WHERE created_at >= DATE_TRUNC('month', CURRENT_DATE)), 0) AS month_cost
+        FROM ai_usage
+        GROUP BY user_id
+      ) u ON u.user_id = ua.user_id
+      ORDER BY ua.created_at DESC
+    `);
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -559,26 +619,6 @@ JSON output only: {"amount": final total paid as number, "date": "YYYY-MM-DD" or
   } catch (err) {
     console.error('Scan bill error:', err);
     res.status(500).json({ error: 'Failed to scan bill' });
-  }
-});
-
-// AI usage summary for the signed-in user, grouped by month
-app.get('/api/ai-usage', requireAuth, async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT TO_CHAR(created_at, 'YYYY-MM') AS month,
-             COUNT(*)::int AS scans,
-             COALESCE(SUM(input_tokens), 0)::int AS input_tokens,
-             COALESCE(SUM(output_tokens), 0)::int AS output_tokens,
-             COALESCE(SUM(cost_usd), 0)::float AS cost_usd
-      FROM ai_usage
-      WHERE user_id = $1
-      GROUP BY 1
-      ORDER BY 1 DESC
-    `, [req.userId]);
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
   }
 });
 

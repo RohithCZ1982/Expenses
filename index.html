@@ -12,12 +12,12 @@
   <div class="auth-card">
     <div class="screen-title">Expense Tracker</div>
     <div class="screen-sub" id="auth-sub">Sign in to your account</div>
-    <div class="form-row">
+    <div class="form-row" id="auth-email-row">
       <label class="form-label">Email</label>
       <input class="form-input" type="email" id="auth-email" placeholder="you@example.com" autocomplete="email">
     </div>
-    <div class="form-row">
-      <label class="form-label">Password</label>
+    <div class="form-row" id="auth-pass-row">
+      <label class="form-label" id="auth-pass-label">Password</label>
       <div class="pass-wrap">
         <input class="form-input" type="password" id="auth-pass" placeholder="••••••••" autocomplete="current-password">
         <button type="button" class="pass-toggle" id="pass-toggle" onclick="togglePassword()" title="Show password">
@@ -26,6 +26,7 @@
         </button>
       </div>
     </div>
+    <div class="auth-forgot" id="auth-forgot"><a href="#" onclick="setAuthMode('forgot');return false">Forgot password?</a></div>
     <div class="auth-error" id="auth-error"></div>
     <button class="btn-add" id="auth-submit" onclick="submitAuth()">Sign In</button>
     <div class="auth-toggle">
@@ -36,18 +37,31 @@
 </div>
 
 <nav class="nav">
-  <button class="nav-btn active" onclick="showScreen('entry',this)">+ Add Expense</button>
-  <button class="nav-btn" onclick="showScreen('dashboard',this)">Analytics</button>
-  <button class="nav-btn" id="nav-users" style="display:none" onclick="showScreen('admin',this)">Users</button>
-  <button class="nav-btn nav-logout" onclick="logout()" title="Sign out">Sign out</button>
+  <button class="nav-btn active" onclick="showScreen('entry',this)" title="Add Expense" aria-label="Add Expense">
+    <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+  </button>
+  <button class="nav-btn" onclick="showScreen('dashboard',this)" title="Analytics" aria-label="Analytics">
+    <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+  </button>
+  <button class="nav-btn" id="nav-users" style="display:none" onclick="showScreen('admin',this)" title="Users" aria-label="Users">
+    <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+  </button>
+  <button class="nav-btn nav-logout" onclick="logout()" title="Sign out" aria-label="Sign out">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+  </button>
 </nav>
 
 <div id="screen-admin" class="screen">
   <div class="screen-header">
     <div class="screen-title">Users</div>
-    <div class="screen-sub">Approve who can sign in</div>
+    <div class="screen-sub">Approve sign-ins and track AI usage cost</div>
   </div>
-  <div class="expense-list" id="admin-user-list"></div>
+  <div class="chart-card" style="padding:12px;overflow-x:auto">
+    <table class="cat-table" id="users-table">
+      <thead><tr><th>User</th><th>Status</th><th>AI Scans</th><th>AI Cost</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
 </div>
 
 <div id="screen-entry" class="screen active">
@@ -120,16 +134,11 @@
       <span class="filter-label">Year:</span>
       <select class="sum-select" id="sum-year" onchange="buildMonthlySummary()"></select>
     </div>
-    <div class="stat-grid" style="margin-bottom:0;grid-template-columns:1fr 1fr">
+    <div class="stat-grid" style="margin-bottom:0;grid-template-columns:1fr">
       <div class="stat-card">
         <div class="stat-label">Spend</div>
         <div class="stat-val" id="sum-spend">₹0</div>
         <div class="stat-sub" id="sum-spend-sub"></div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">AI Scan Cost</div>
-        <div class="stat-val" id="sum-ai">$0.00</div>
-        <div class="stat-sub" id="sum-ai-sub"></div>
       </div>
     </div>
   </div>
@@ -236,21 +245,75 @@ async function api(path,opts={}){
   return res;
 }
 
+let resetToken='';
+
+const AUTH_MODES={
+  signin:{sub:'Sign in to your account',btn:'Sign In',toggle:['New here?','Create an account'],email:true,pass:true,passLabel:'Password',forgot:true},
+  signup:{sub:'Create a new account',btn:'Create Account',toggle:['Already have an account?','Sign in'],email:true,pass:true,passLabel:'Password',forgot:false},
+  forgot:{sub:'We will email you a reset link',btn:'Send Reset Link',toggle:['Remembered it?','Back to sign in'],email:true,pass:false,passLabel:'Password',forgot:false},
+  reset:{sub:'Choose a new password',btn:'Set New Password',toggle:['Changed your mind?','Back to sign in'],email:false,pass:true,passLabel:'New Password',forgot:false},
+};
+
+function setAuthMode(mode){
+  authMode=mode;
+  const m=AUTH_MODES[mode];
+  document.getElementById('auth-sub').textContent=m.sub;
+  document.getElementById('auth-submit').textContent=m.btn;
+  document.getElementById('auth-toggle-text').textContent=m.toggle[0];
+  document.getElementById('auth-toggle-link').textContent=m.toggle[1];
+  document.getElementById('auth-email-row').style.display=m.email?'':'none';
+  document.getElementById('auth-pass-row').style.display=m.pass?'':'none';
+  document.getElementById('auth-pass-label').textContent=m.passLabel;
+  document.getElementById('auth-forgot').style.display=m.forgot?'':'none';
+  const err=document.getElementById('auth-error');
+  err.textContent='';err.classList.remove('ok');
+}
+
 function toggleAuthMode(){
-  authMode=authMode==='signin'?'signup':'signin';
-  document.getElementById('auth-submit').textContent=authMode==='signin'?'Sign In':'Create Account';
-  document.getElementById('auth-sub').textContent=authMode==='signin'?'Sign in to your account':'Create a new account';
-  document.getElementById('auth-toggle-text').textContent=authMode==='signin'?'New here?':'Already have an account?';
-  document.getElementById('auth-toggle-link').textContent=authMode==='signin'?'Create an account':'Sign in';
-  document.getElementById('auth-error').textContent='';
+  setAuthMode(authMode==='signin'?'signup':'signin');
 }
 
 async function submitAuth(){
   const email=document.getElementById('auth-email').value.trim();
   const pass=document.getElementById('auth-pass').value;
   const errEl=document.getElementById('auth-error');
-  if(!email||!pass){errEl.textContent='Enter email and password';return}
+  errEl.classList.remove('ok');
   const btn=document.getElementById('auth-submit');
+
+  if(authMode==='forgot'){
+    if(!email){errEl.textContent='Enter your email';return}
+    btn.disabled=true;errEl.textContent='';
+    try{
+      const res=await fetch(API_URL+'/auth/forgot',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email})});
+      const data=await res.json();
+      if(!res.ok){errEl.textContent=data.error||'Could not send reset link';return}
+      errEl.textContent='Reset link sent — check your email inbox';
+      errEl.classList.add('ok');
+    }catch(err){console.error(err);errEl.textContent='Connection error'}
+    finally{btn.disabled=false}
+    return;
+  }
+
+  if(authMode==='reset'){
+    if(!pass){errEl.textContent='Enter a new password';return}
+    btn.disabled=true;errEl.textContent='';
+    try{
+      const res=await fetch(API_URL+'/auth/reset',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:resetToken,newPassword:pass})});
+      const data=await res.json();
+      if(!res.ok){errEl.textContent=data.error||'Could not reset password';return}
+      resetToken='';
+      history.replaceState(null,'',location.pathname);
+      document.getElementById('auth-pass').value='';
+      setAuthMode('signin');
+      const err2=document.getElementById('auth-error');
+      err2.textContent='Password updated — sign in with your new password';
+      err2.classList.add('ok');
+    }catch(err){console.error(err);errEl.textContent='Connection error'}
+    finally{btn.disabled=false}
+    return;
+  }
+
+  if(!email||!pass){errEl.textContent='Enter email and password';return}
   btn.disabled=true;errEl.textContent='';
   try{
     const res=await fetch(API_URL+'/auth/'+(authMode==='signin'?'signin':'signup'),{
@@ -281,7 +344,6 @@ async function submitAuth(){
 function logout(){
   setTokens('','');
   expensesCache=[];
-  aiUsageCache=[];
   document.getElementById('recent-list').innerHTML='';
   document.getElementById('nav-users').style.display='none';
   showAuth();
@@ -314,28 +376,32 @@ function applyMe(me,errEl){
 }
 
 async function loadAdminUsers(){
-  const el=document.getElementById('admin-user-list');
-  el.innerHTML='<div class="empty-state">Loading…</div>';
+  const tbody=document.querySelector('#users-table tbody');
+  tbody.innerHTML='<tr><td colspan="5" class="tbl-note">Loading…</td></tr>';
   try{
     const res=await api('/admin/users');
-    if(!res.ok){el.innerHTML='<div class="empty-state">Could not load users</div>';return}
+    if(!res.ok){tbody.innerHTML='<tr><td colspan="5" class="tbl-note">Could not load users</td></tr>';return}
     const users=await res.json();
-    if(!users.length){el.innerHTML='<div class="empty-state"><div class="empty-icon">👥</div>No sign-ups yet.</div>';return}
-    el.innerHTML=users.map(u=>{
+    if(!users.length){tbody.innerHTML='<tr><td colspan="5" class="tbl-note">No sign-ups yet</td></tr>';return}
+    let totCost=0,totScans=0;
+    tbody.innerHTML=users.map(u=>{
       const d=new Date(u.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});
+      const name=esc((u.email||'').split('@')[0]||u.user_id);
+      totCost+=u.cost_usd;totScans+=u.scans;
       const approve=u.status!=='approved'?`<button class="user-btn approve" onclick="setUserStatus('${esc(u.user_id)}','approved')">Approve</button>`:'';
       const reject=u.status!=='rejected'?`<button class="user-btn reject" onclick="setUserStatus('${esc(u.user_id)}','rejected')">Reject</button>`:'';
-      return`<div class="expense-item">
-        <div class="exp-info">
-          <div class="exp-cat">${esc(u.email||u.user_id)}</div>
-          <div class="exp-date">Joined ${d} · <span class="user-badge ${esc(u.status)}">${esc(u.status)}</span></div>
-        </div>
-        ${approve}${reject}
-      </div>`;
-    }).join('');
+      return`<tr>
+        <td><div style="font-weight:500">${name}</div><div style="font-size:10px;color:#8a8480">${esc(u.email||'')}<br>Joined ${d}</div></td>
+        <td><span class="user-badge ${esc(u.status)}">${esc(u.status)}</span></td>
+        <td>${u.scans}<div style="font-size:10px;color:#8a8480">${u.month_scans} this month</div></td>
+        <td style="white-space:nowrap">$${u.cost_usd.toFixed(4)}<div style="font-size:10px;color:#8a8480">$${u.month_cost_usd.toFixed(4)} this month</div></td>
+        <td style="white-space:nowrap">${approve}${reject}</td>
+      </tr>`;
+    }).join('')+
+    `<tr><td style="font-weight:500">Total</td><td></td><td style="font-weight:500">${totScans}</td><td style="font-weight:500">$${totCost.toFixed(4)}</td><td></td></tr>`;
   }catch(err){
     console.error(err);
-    el.innerHTML='<div class="empty-state">Could not load users</div>';
+    tbody.innerHTML='<tr><td colspan="5" class="tbl-note">Could not load users</td></tr>';
   }
 }
 
@@ -554,16 +620,6 @@ async function renderRecent(){
   }).join('');
 }
 
-let aiUsageCache=[];
-
-async function loadAiUsage(){
-  try{
-    const res=await api('/ai-usage');
-    if(res.ok)aiUsageCache=await res.json();
-  }catch(err){console.error('AI usage load error:',err)}
-  return aiUsageCache;
-}
-
 const MONTH_NAMES=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 function initSummaryFilters(){
@@ -573,7 +629,6 @@ function initSummaryFilters(){
   const now=new Date();
   const years=new Set([now.getFullYear()]);
   expensesCache.forEach(e=>years.add(parseInt(e.date.slice(0,4))));
-  aiUsageCache.forEach(u=>years.add(parseInt(u.month.slice(0,4))));
   mSel.innerHTML='<option value="">All</option>'+MONTH_NAMES.map((n,i)=>`<option value="${String(i+1).padStart(2,'0')}">${n}</option>`).join('');
   ySel.innerHTML=[...years].sort((a,b)=>b-a).map(y=>`<option value="${y}">${y}</option>`).join('');
   mSel.value=prevM!==''&&[...mSel.options].some(o=>o.value===prevM)?prevM:String(now.getMonth()+1).padStart(2,'0');
@@ -588,12 +643,6 @@ function buildMonthlySummary(){
   const spend=exp.reduce((s,e)=>s+e.amount,0);
   document.getElementById('sum-spend').textContent=formatAmt(spend);
   document.getElementById('sum-spend-sub').textContent=exp.length?`${exp.length} expense${exp.length>1?'s':''}`:'No expenses';
-  const usage=aiUsageCache.filter(u=>u.month.startsWith(prefix));
-  const scans=usage.reduce((s,u)=>s+u.scans,0);
-  const cost=usage.reduce((s,u)=>s+u.cost_usd,0);
-  const tokens=usage.reduce((s,u)=>s+u.input_tokens+u.output_tokens,0);
-  document.getElementById('sum-ai').textContent='$'+cost.toFixed(4);
-  document.getElementById('sum-ai-sub').textContent=scans?`${scans} scan${scans>1?'s':''} · ${tokens.toLocaleString('en-IN')} tokens`:'No scans';
 }
 
 let chartWeek,chartMonth,chartCat;
@@ -616,7 +665,6 @@ let activePeriod='month';
 
 async function buildDashboard(){
   const arr=await loadExpenses();
-  await loadAiUsage();
   initSummaryFilters();
   buildMonthlySummary();
   console.log('Dashboard data:', arr);
@@ -741,7 +789,12 @@ function showToast(msg){
   setTimeout(()=>t.classList.remove('show'),2200);
 }
 
-if(authToken){
+resetToken=new URLSearchParams(location.search).get('token')||'';
+if(resetToken){
+  setTokens('','');
+  showAuth();
+  setAuthMode('reset');
+}else if(authToken){
   hideAuth();
   (async()=>{
     const me=await fetchMe();
