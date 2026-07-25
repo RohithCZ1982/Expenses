@@ -1057,17 +1057,22 @@ async function setPeriod(p){activePeriod=p;buildCategorySection(await loadExpens
 async function exportExcel(){
   const arr=await loadExpenses();
   if(!arr.length){showToast('No expenses to export');return}
-  const ws=XLSX.utils.json_to_sheet(arr.map(e=>({Date:e.date,Category:e.category,Amount:e.amount,Note:e.note||''})));
-  ws['!cols']=[{wch:14},{wch:22},{wch:12},{wch:30}];
-  const wb=XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb,'Expenses',ws);
-  const bycat={};arr.forEach(e=>{bycat[e.category]=(bycat[e.category]||0)+e.amount});
-  const sumRows=[['Category','Total (₹)'],...Object.entries(bycat).sort((a,b)=>b[1]-a[1])];
-  const ws2=XLSX.utils.aoa_to_sheet(sumRows);
-  ws2['!cols']=[{wch:22},{wch:14}];
-  XLSX.utils.book_append_sheet(wb,'Summary',ws2);
-  XLSX.writeFile(wb,`expenses_${todayStr()}.xlsx`);
-  showToast('Excel exported!');
+  try{
+    const ws=XLSX.utils.json_to_sheet(arr.map(e=>({Date:e.date,Category:e.category,Amount:e.amount,Note:e.note||''})));
+    ws['!cols']=[{wch:14},{wch:22},{wch:12},{wch:30}];
+    const wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb,ws,'Expenses');
+    const bycat={};arr.forEach(e=>{bycat[e.category]=(bycat[e.category]||0)+e.amount});
+    const sumRows=[['Category','Total (₹)'],...Object.entries(bycat).sort((a,b)=>b[1]-a[1])];
+    const ws2=XLSX.utils.aoa_to_sheet(sumRows);
+    ws2['!cols']=[{wch:22},{wch:14}];
+    XLSX.utils.book_append_sheet(wb,ws2,'Summary');
+    XLSX.writeFile(wb,`expenses_${todayStr()}.xlsx`);
+    showToast('Excel exported!');
+  }catch(err){
+    console.error('Export error:',err);
+    showToast('Could not export — please try again');
+  }
 }
 
 function showScreen(id, btn){
