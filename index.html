@@ -336,11 +336,9 @@ async function submitAuth(){
       if(!me)errEl.textContent='Could not verify account';
       return;
     }
-    document.getElementById('auth-pass').value='';
-    hideAuth();
-    await renderRecent();
-    updateScanQuota();
-    showToast(authMode==='signin'?'Welcome back!':'Account created!');
+    // Full reload so no state from a previously signed-in account survives
+    location.reload();
+    return;
   }catch(err){
     console.error(err);
     errEl.textContent='Connection error';
@@ -351,10 +349,7 @@ async function submitAuth(){
 
 function logout(){
   setTokens('','');
-  expensesCache=[];
-  document.getElementById('recent-list').innerHTML='';
-  document.getElementById('nav-users').style.display='none';
-  showAuth();
+  location.reload();
 }
 
 function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}

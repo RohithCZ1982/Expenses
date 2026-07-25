@@ -16,6 +16,9 @@ const pool = new Pool({
 
 app.use(cors());
 app.use(express.json({ limit: '15mb' }));
+// Never let browsers cache API responses — stale data must not leak
+// across account switches on a shared device
+app.use('/api', (req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
 app.use(express.static(__dirname));
 
 // ---- Neon Auth (managed Better Auth) ----
