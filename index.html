@@ -87,7 +87,7 @@
       </button>
     </div>
   </div>
-  <iframe id="manual-frame" class="manual-frame" title="User Guide PDF"></iframe>
+  <div id="manual-frame" class="manual-frame"></div>
 </div>
 
 <div id="screen-admin" class="screen">
@@ -262,6 +262,7 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
 <script>
 const API_URL = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
   ? 'http://localhost:3000/api'
@@ -1079,14 +1080,48 @@ function showScreen(id, btn){
   if(id==='settings')buildSettingsScreen();
 }
 
+// iOS standalone/PWA mode uses a stripped-down web engine that often
+// renders only the first page of a PDF inside an <iframe> with no way to
+// scroll further. Rendering each page ourselves onto canvases sidesteps
+// that platform limitation entirely — this is plain DOM scrolling, not a
+// native PDF viewer.
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+
+async function renderManualPdf(){
+  const container=document.getElementById('manual-frame');
+  container.innerHTML='<div class="manual-loading">Loading guide…</div>';
+  try{
+    const pdf=await pdfjsLib.getDocument('user-manual.pdf').promise;
+    container.innerHTML='';
+    const dpr=window.devicePixelRatio||1;
+    const targetWidth=container.clientWidth||360;
+    for(let i=1;i<=pdf.numPages;i++){
+      const page=await pdf.getPage(i);
+      const pageScale=targetWidth/page.getViewport({scale:1}).width;
+      const viewport=page.getViewport({scale:pageScale*dpr});
+      const canvas=document.createElement('canvas');
+      canvas.className='manual-page';
+      canvas.width=viewport.width;
+      canvas.height=viewport.height;
+      canvas.style.width=(viewport.width/dpr)+'px';
+      canvas.style.height=(viewport.height/dpr)+'px';
+      container.appendChild(canvas);
+      await page.render({canvasContext:canvas.getContext('2d'),viewport}).promise;
+    }
+  }catch(err){
+    console.error('PDF render error:',err);
+    container.innerHTML='<div class="manual-loading">Could not display the guide here — use the download button above.</div>';
+  }
+}
+
 function showManual(){
-  document.getElementById('manual-frame').src='user-manual.pdf';
   document.getElementById('manual-viewer').classList.remove('hidden');
+  renderManualPdf();
 }
 
 function hideManual(){
   document.getElementById('manual-viewer').classList.add('hidden');
-  document.getElementById('manual-frame').src='';
+  document.getElementById('manual-frame').innerHTML='';
 }
 
 async function refreshCurrent(){
