@@ -70,6 +70,9 @@ body{font-family:var(--ff-body);background:var(--cream);color:var(--ink);font-si
 .auth-toggle a{color:var(--gold);text-decoration:none;font-weight:500}
 .auth-toggle a:hover{text-decoration:underline}
 .nav-logout{flex:0 0 auto;padding:13px 16px}
+#refresh-icon.spinning{animation:spin .6s linear}
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+#btn-refresh:disabled{opacity:.6;cursor:default}
 .auth-forgot{text-align:right;font-size:11px;margin:-8px 0 10px}
 .auth-forgot a{color:var(--ink3);text-decoration:none}
 .auth-forgot a:hover{color:var(--gold);text-decoration:underline}

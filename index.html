@@ -61,6 +61,9 @@
   <button class="nav-btn" id="nav-users" style="display:none" onclick="showScreen('admin',this)" title="Users" aria-label="Users">
     <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
   </button>
+  <button class="nav-btn nav-logout" id="btn-refresh" onclick="refreshCurrent()" title="Refresh" aria-label="Refresh">
+    <svg id="refresh-icon" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
+  </button>
   <a class="nav-btn nav-logout" href="user-manual.pdf" target="_blank" rel="noopener" title="User Guide" aria-label="User Guide" style="text-decoration:none">
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
   </a>
@@ -1044,6 +1047,29 @@ function showScreen(id, btn){
   if(id==='dashboard')buildDashboard();
   if(id==='admin')loadAdminUsers();
   if(id==='settings')buildSettingsScreen();
+}
+
+async function refreshCurrent(){
+  const btn=document.getElementById('btn-refresh');
+  const icon=document.getElementById('refresh-icon');
+  if(btn.disabled)return;
+  btn.disabled=true;
+  icon.classList.add('spinning');
+  try{
+    const active=document.querySelector('.screen.active');
+    const id=active?active.id.replace('screen-',''):'entry';
+    if(id==='dashboard')await buildDashboard();
+    else if(id==='admin')await loadAdminUsers();
+    else if(id==='settings')await buildSettingsScreen();
+    else{await renderRecent();await updateScanQuota()}
+    showToast('Refreshed');
+  }catch(err){
+    console.error(err);
+    showToast('Refresh failed');
+  }finally{
+    btn.disabled=false;
+    icon.classList.remove('spinning');
+  }
 }
 
 function showToast(msg){
