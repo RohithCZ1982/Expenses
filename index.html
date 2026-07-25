@@ -38,7 +38,7 @@
     <div class="form-row" id="auth-consent-row" style="display:none">
       <label class="consent-label">
         <input type="checkbox" id="auth-consent">
-        <span>I agree to the <a href="privacy.html" target="_blank" rel="noopener">Privacy Policy</a></span>
+        <span>I agree to the <a href="#" onclick="showPrivacy();return false">Privacy Policy</a></span>
       </label>
     </div>
     <div class="auth-error" id="auth-error"></div>
@@ -88,6 +88,16 @@
     </div>
   </div>
   <div id="manual-frame" class="manual-frame"></div>
+</div>
+
+<div id="privacy-viewer" class="manual-viewer hidden">
+  <div class="manual-viewer-bar">
+    <span>Privacy Policy</span>
+    <button onclick="hidePrivacy()" class="manual-icon-btn" title="Close" aria-label="Close">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+  </div>
+  <iframe id="privacy-frame" class="privacy-frame" title="Privacy Policy"></iframe>
 </div>
 
 <div id="screen-admin" class="screen">
@@ -255,7 +265,7 @@
 <footer class="app-footer">
   <div><span class="footer-label">Powered by</span>
   <a href="https://www.atreyasofttech.in/" target="_blank" rel="noopener" class="footer-brand">Atreya SoftTech</a></div>
-  <div style="margin-top:4px"><a href="privacy.html" target="_blank" rel="noopener" class="footer-privacy-link">Privacy Policy</a></div>
+  <div style="margin-top:4px"><a href="#" onclick="showPrivacy();return false" class="footer-privacy-link">Privacy Policy</a></div>
 </footer>
 
 <div class="toast" id="toast"></div>
@@ -1131,6 +1141,20 @@ function showManual(){
 function hideManual(){
   document.getElementById('manual-viewer').classList.add('hidden');
   document.getElementById('manual-frame').innerHTML='';
+}
+
+// Privacy Policy is plain HTML (unlike the PDF), so a same-origin iframe
+// renders it reliably everywhere, including standalone/PWA mode — it just
+// needs its own close button rather than a real navigation, since standalone
+// mode has no back button to escape a full-page link to it.
+function showPrivacy(){
+  document.getElementById('privacy-frame').src='privacy.html';
+  document.getElementById('privacy-viewer').classList.remove('hidden');
+}
+
+function hidePrivacy(){
+  document.getElementById('privacy-viewer').classList.add('hidden');
+  document.getElementById('privacy-frame').src='';
 }
 
 async function refreshCurrent(){
