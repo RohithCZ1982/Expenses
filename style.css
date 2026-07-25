@@ -21,7 +21,7 @@ body{font-family:var(--ff-body);background:var(--cream);color:var(--ink);font-si
 .nav-btn.active{color:var(--gold);border-bottom:2px solid var(--gold)}
 .nav-btn:hover:not(.active){color:var(--ink);background:var(--cream2)}
 
-.screen{display:none;padding:20px 16px}
+.screen{display:none;padding:20px 16px;box-sizing:border-box;min-height:calc(100vh - 50px)}
 .screen.active{display:block}
 
 .screen-header{margin-bottom:20px}
