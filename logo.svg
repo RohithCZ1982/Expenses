@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- App icon: scanned receipt with rupee mark -->
+  <rect width="512" height="512" rx="112" fill="#1a1714"/>
+
+  <!-- viewfinder brackets -->
+  <g stroke="#c9962a" stroke-width="18" stroke-linecap="round" fill="none">
+    <path d="M84 140 v-28 a28 28 0 0 1 28 -28 h28"/>
+    <path d="M428 140 v-28 a28 28 0 0 0 -28 -28 h-28"/>
+    <path d="M84 372 v28 a28 28 0 0 0 28 28 h28"/>
+    <path d="M428 372 v28 a28 28 0 0 1 -28 28 h-28"/>
+  </g>
+
+  <!-- receipt -->
+  <path d="M172 128
+           h168
+           a12 12 0 0 1 12 12
+           v230
+           l-21 16 -21 -16 -21 16 -21 -16 -21 16 -21 -16 -21 16 -21 -16
+           v-230
+           a12 12 0 0 1 12 -12 z"
+        fill="#faf8f4"/>
+
+  <!-- receipt text lines -->
+  <g fill="#e4dfd5">
+    <rect x="192" y="156" width="128" height="12" rx="6"/>
+    <rect x="192" y="180" width="88" height="12" rx="6"/>
+  </g>
+
+  <!-- scan line -->
+  <rect x="120" y="212" width="272" height="11" rx="5.5" fill="#c9962a" opacity="0.9"/>
+
+  <!-- rupee -->
+  <text x="256" y="352" font-family="Georgia, 'Noto Serif', serif" font-weight="bold"
+        font-size="140" fill="#c9962a" text-anchor="middle">&#8377;</text>
+</svg>
