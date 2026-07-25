@@ -578,7 +578,11 @@ document.getElementById('search-cat').innerHTML='<option value="">All categories
 let editingId=null;
 
 function editExpense(id){
-  const e=expensesCache.find(x=>x.id===id);
+  // Expense IDs come back from the server as strings (Postgres BIGINT
+  // columns are returned as strings by the pg driver to avoid precision
+  // loss), but an id interpolated into an onclick="..." attribute becomes
+  // a bare numeric literal — normalize both sides so the lookup matches.
+  const e=expensesCache.find(x=>String(x.id)===String(id));
   if(!e)return;
   editingId=id;
   document.getElementById('f-date').value=e.date;
@@ -806,7 +810,7 @@ async function renderRecent(){
     const c=getCatInfo(e.category);
     const d=new Date(e.date+'T00:00:00');
     const ds=d.toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});
-    const editing=e.id===editingId;
+    const editing=editingId!=null&&String(e.id)===String(editingId);
     return`<div class="expense-item${editing?' editing':''}">
       <div class="exp-cat-dot" style="background:${c.color}22">${c.emoji}</div>
       <div class="exp-info">
