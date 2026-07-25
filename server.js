@@ -101,6 +101,21 @@ function sessionCookiesFrom(headers) {
   return cookies.map(c => c.split(';')[0]).join('; ');
 }
 
+// ---- Rate limiting for auth endpoints ----
+// These endpoints are unauthenticated by nature (that's the point), so they
+// can't be keyed by user id like the scan limiter — keyed by IP, and by
+// email too where brute-forcing or spamming one specific account matters.
+const authRateHits = new Map();
+function isAuthRateLimited(key, windowMs, max) {
+  const now = Date.now();
+  const hits = (authRateHits.get(key) || []).filter(t => now - t < windowMs);
+  if (hits.length >= max) { authRateHits.set(key, hits); return true; }
+  hits.push(now);
+  authRateHits.set(key, hits);
+  return false;
+}
+const RATE_LIMITED_MSG = 'Too many attempts — please wait a few minutes and try again';
+
 // Get a verifiable JWT for a Better Auth session. Tries the JWT plugin's
 // /token endpoint (bearer and/or cookie), then falls back to /get-session,
 // which returns the JWT in a set-auth-jwt response header.
@@ -155,14 +170,36 @@ async function handleCredentialAuth(req, res, path) {
   }
 }
 
-app.post('/api/auth/signup', (req, res) => handleCredentialAuth(req, res, '/sign-up/email'));
-app.post('/api/auth/signin', (req, res) => handleCredentialAuth(req, res, '/sign-in/email'));
+app.post('/api/auth/signup', (req, res) => {
+  // Caps mass account creation from one IP
+  if (isAuthRateLimited('signup:' + req.ip, 60 * 60 * 1000, 8)) {
+    return res.status(429).json({ error: RATE_LIMITED_MSG });
+  }
+  return handleCredentialAuth(req, res, '/sign-up/email');
+});
+
+app.post('/api/auth/signin', (req, res) => {
+  const email = (req.body?.email || '').toLowerCase();
+  // Per-IP catches broad credential stuffing; per-email slows a targeted
+  // brute force on one account even from many different IPs
+  if (isAuthRateLimited('signin-ip:' + req.ip, 15 * 60 * 1000, 15)
+    || (email && isAuthRateLimited('signin-email:' + email, 15 * 60 * 1000, 8))) {
+    return res.status(429).json({ error: RATE_LIMITED_MSG });
+  }
+  return handleCredentialAuth(req, res, '/sign-in/email');
+});
 
 // Send a password-reset email; the link returns to the app with ?token=
 app.post('/api/auth/forgot', async (req, res) => {
   if (!authConfigured(res)) return;
   const { email } = req.body || {};
   if (!email) return res.status(400).json({ error: 'Email is required' });
+  // Per-IP and per-email so this can't be used to spam one person's inbox
+  // with reset emails, nor to enumerate accounts at volume
+  if (isAuthRateLimited('forgot-ip:' + req.ip, 60 * 60 * 1000, 5)
+    || isAuthRateLimited('forgot-email:' + email.toLowerCase(), 60 * 60 * 1000, 3)) {
+    return res.status(429).json({ error: RATE_LIMITED_MSG });
+  }
   try {
     const origin = requestOrigin(req);
     const headers = { 'Content-Type': 'application/json', Origin: origin };
@@ -186,6 +223,9 @@ app.post('/api/auth/reset', async (req, res) => {
   if (!authConfigured(res)) return;
   const { token, newPassword } = req.body || {};
   if (!token || !newPassword) return res.status(400).json({ error: 'Token and new password are required' });
+  if (isAuthRateLimited('reset-ip:' + req.ip, 60 * 60 * 1000, 10)) {
+    return res.status(429).json({ error: RATE_LIMITED_MSG });
+  }
   try {
     const r = await neonAuthCall('/reset-password', {
       method: 'POST',
@@ -207,6 +247,9 @@ app.post('/api/auth/refresh', async (req, res) => {
   if (!authConfigured(res)) return;
   const { refreshToken } = req.body || {};
   if (!refreshToken) return res.status(401).json({ error: 'No refresh token' });
+  if (isAuthRateLimited('refresh-ip:' + req.ip, 15 * 60 * 1000, 60)) {
+    return res.status(429).json({ error: RATE_LIMITED_MSG });
+  }
   try {
     const jwt = await getJwtForSession(parseRefreshCred(refreshToken), requestOrigin(req));
     if (!jwt) return res.status(401).json({ error: 'Session expired — please sign in again' });

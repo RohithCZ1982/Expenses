@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Privacy Policy — Expense Tracker</title>
+<link rel="icon" type="image/svg+xml" href="logo.svg">
+<link rel="stylesheet" href="style.css">
+<style>
+  .doc{padding:28px 20px 40px;max-width:640px;margin:0 auto}
+  .doc h1{font-family:var(--ff-head);font-size:26px;color:var(--ink);margin-bottom:4px}
+  .doc .updated{font-size:12px;color:var(--ink3);margin-bottom:24px}
+  .doc h2{font-family:var(--ff-head);font-size:16px;color:var(--ink);margin:26px 0 8px;padding-top:10px;border-top:1px solid var(--cream3)}
+  .doc h2:first-of-type{border-top:none;padding-top:0}
+  .doc p,.doc li{font-size:13.5px;line-height:1.65;color:var(--ink2);margin-bottom:8px}
+  .doc ul{padding-left:20px;margin-bottom:10px}
+  .doc strong{color:var(--ink)}
+  .doc a{color:var(--gold);text-decoration:none}
+  .doc a:hover{text-decoration:underline}
+  .back-link{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--ink2);text-decoration:none;margin-bottom:18px}
+  .back-link:hover{color:var(--gold)}
+</style>
+</head>
+<body>
+<nav class="nav">
+  <img src="logo.svg" alt="Expense Tracker" class="nav-logo">
+  <span style="padding:13px 8px;font-size:13px;font-weight:500;color:var(--ink)">Privacy Policy</span>
+</nav>
+
+<div class="doc">
+  <a class="back-link" href="/">← Back to Expense Tracker</a>
+  <h1>Privacy Policy</h1>
+  <div class="updated">Last updated: 25 July 2026</div>
+
+  <p>This policy explains what information Expense Tracker ("the app") collects, how it is used, and who it is
+  shared with. The app is built and operated by <strong>Atreya SoftTech</strong>. By creating an account you agree
+  to the practices described here.</p>
+
+  <h2>Information We Collect</h2>
+  <ul>
+    <li><strong>Account information:</strong> your email address and password (your password is handled entirely
+    by our authentication provider, Neon Auth — we never see or store it ourselves).</li>
+    <li><strong>Expense records:</strong> the date, amount, category, and any note you enter or that is extracted
+    from a scanned bill.</li>
+    <li><strong>Bill images/PDFs you scan:</strong> processed to extract expense details (see below). We do not
+    keep a permanent copy of the image itself after the scan request completes.</li>
+    <li><strong>Usage data:</strong> the number of AI scans you make and their approximate processing cost, used
+    to enforce your monthly scan allowance and for our own cost tracking.</li>
+  </ul>
+
+  <h2>How We Use AI to Scan Bills</h2>
+  <p>When you use "Scan Bill with AI", the photo or PDF you provide is sent to <strong>Google's Gemini API</strong>
+  to extract the amount, date, category, and merchant name. This means the content of any bill you scan —
+  including anything visible on it — is transmitted to Google for processing under
+  <a href="https://ai.google.dev/gemini-api/terms" target="_blank" rel="noopener">Google's API terms</a>. Only
+  scan genuine purchase bills; avoid scanning documents that contain sensitive information you would not want
+  processed by a third-party AI service.</p>
+
+  <h2>How We Store Your Data</h2>
+  <p>Expense records and account status are stored in a <strong>Neon PostgreSQL database</strong>. Authentication
+  (sign-up, sign-in, password resets) is handled by <strong>Neon Auth</strong>. Your session token is stored in
+  your browser's local storage so you stay signed in.</p>
+
+  <h2>Who Can See Your Data</h2>
+  <p>Your expense records are private to your account — no other user, including other approved users of this
+  app, can view, edit, or delete them. The app administrator can see your email address, account status (approved
+  / pending / deactivated), and your AI scan count and cost, but <strong>cannot see your individual expense
+  records</strong>. New accounts require one-time administrator approval before use.</p>
+
+  <h2>Data Sharing</h2>
+  <p>We do not sell your data. It is shared only with the service providers necessary to run the app:</p>
+  <ul>
+    <li><strong>Google (Gemini API)</strong> — to process bills you choose to scan.</li>
+    <li><strong>Neon</strong> — our database and authentication provider.</li>
+    <li><strong>Render</strong> — our application hosting provider.</li>
+  </ul>
+
+  <h2>Data Retention &amp; Deletion</h2>
+  <p>Your expense records are retained until you delete them individually or ask us to delete your account. To
+  request full account and data deletion, contact the administrator or reach out via
+  <a href="https://www.atreyasofttech.in/" target="_blank" rel="noopener">atreyasofttech.in</a>.</p>
+
+  <h2>Your Rights</h2>
+  <p>You may access, edit, or delete your own expense records at any time within the app. You may request a full
+  export of your data (via the Export to Excel feature) or request account deletion at any time.</p>
+
+  <h2>Children's Privacy</h2>
+  <p>This app is not directed at children under 13, and we do not knowingly collect information from them.</p>
+
+  <h2>Changes to This Policy</h2>
+  <p>We may update this policy as the app changes. The "Last updated" date above will reflect the most recent
+  revision. Continued use of the app after a change constitutes acceptance of the updated policy.</p>
+
+  <h2>Contact</h2>
+  <p>Questions about this policy or your data can be directed to
+  <a href="https://www.atreyasofttech.in/" target="_blank" rel="noopener">Atreya SoftTech</a>.</p>
+</div>
+
+<footer class="app-footer">
+  <span class="footer-label">Powered by</span>
+  <a href="https://www.atreyasofttech.in/" target="_blank" rel="noopener" class="footer-brand">Atreya SoftTech</a>
+</footer>
+</body>
+</html>

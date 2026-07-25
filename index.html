@@ -35,6 +35,12 @@
       </div>
     </div>
     <div class="auth-forgot" id="auth-forgot"><a href="#" onclick="setAuthMode('forgot');return false">Forgot password?</a></div>
+    <div class="form-row" id="auth-consent-row" style="display:none">
+      <label class="consent-label">
+        <input type="checkbox" id="auth-consent">
+        <span>I agree to the <a href="privacy.html" target="_blank" rel="noopener">Privacy Policy</a></span>
+      </label>
+    </div>
     <div class="auth-error" id="auth-error"></div>
     <button class="btn-add" id="auth-submit" onclick="submitAuth()">Sign In</button>
     <div class="auth-toggle">
@@ -247,8 +253,9 @@
 </div>
 
 <footer class="app-footer">
-  <span class="footer-label">Powered by</span>
-  <a href="https://www.atreyasofttech.in/" target="_blank" rel="noopener" class="footer-brand">Atreya SoftTech</a>
+  <div><span class="footer-label">Powered by</span>
+  <a href="https://www.atreyasofttech.in/" target="_blank" rel="noopener" class="footer-brand">Atreya SoftTech</a></div>
+  <div style="margin-top:4px"><a href="privacy.html" target="_blank" rel="noopener" class="footer-privacy-link">Privacy Policy</a></div>
 </footer>
 
 <div class="toast" id="toast"></div>
@@ -323,10 +330,10 @@ async function api(path,opts={}){
 let resetToken='';
 
 const AUTH_MODES={
-  signin:{sub:'Sign in to your account',btn:'Sign In',toggle:['New here?','Create an account'],email:true,pass:true,passLabel:'Password',forgot:true},
-  signup:{sub:'Create a new account',btn:'Create Account',toggle:['Already have an account?','Sign in'],email:true,pass:true,passLabel:'Password',forgot:false},
-  forgot:{sub:'We will email you a reset link',btn:'Send Reset Link',toggle:['Remembered it?','Back to sign in'],email:true,pass:false,passLabel:'Password',forgot:false},
-  reset:{sub:'Choose a new password',btn:'Set New Password',toggle:['Changed your mind?','Back to sign in'],email:false,pass:true,passLabel:'New Password',forgot:false},
+  signin:{sub:'Sign in to your account',btn:'Sign In',toggle:['New here?','Create an account'],email:true,pass:true,passLabel:'Password',forgot:true,consent:false},
+  signup:{sub:'Create a new account',btn:'Create Account',toggle:['Already have an account?','Sign in'],email:true,pass:true,passLabel:'Password',forgot:false,consent:true},
+  forgot:{sub:'We will email you a reset link',btn:'Send Reset Link',toggle:['Remembered it?','Back to sign in'],email:true,pass:false,passLabel:'Password',forgot:false,consent:false},
+  reset:{sub:'Choose a new password',btn:'Set New Password',toggle:['Changed your mind?','Back to sign in'],email:false,pass:true,passLabel:'New Password',forgot:false,consent:false},
 };
 
 function setAuthMode(mode){
@@ -340,6 +347,8 @@ function setAuthMode(mode){
   document.getElementById('auth-pass-row').style.display=m.pass?'':'none';
   document.getElementById('auth-pass-label').textContent=m.passLabel;
   document.getElementById('auth-forgot').style.display=m.forgot?'':'none';
+  document.getElementById('auth-consent-row').style.display=m.consent?'':'none';
+  document.getElementById('auth-consent').checked=false;
   const err=document.getElementById('auth-error');
   err.textContent='';err.classList.remove('ok');
 }
@@ -389,6 +398,10 @@ async function submitAuth(){
   }
 
   if(!email||!pass){errEl.textContent='Enter email and password';return}
+  if(authMode==='signup'&&!document.getElementById('auth-consent').checked){
+    errEl.textContent='Please accept the Privacy Policy to continue';
+    return;
+  }
   btn.disabled=true;errEl.textContent='';
   try{
     const res=await fetch(API_URL+'/auth/'+(authMode==='signin'?'signin':'signup'),{
