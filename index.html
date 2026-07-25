@@ -79,6 +79,7 @@
     <button class="btn-scan" id="btn-scan" onclick="document.getElementById('f-bill').click()">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
       <span id="btn-scan-label">Scan Bill with AI</span>
+      <span class="scan-quota" id="scan-quota" style="display:none" title="Scans used this month"></span>
     </button>
     <input type="file" id="f-bill" accept="image/*,application/pdf" style="display:none" onchange="scanBill(this)">
     <div class="scan-divider"><span>or enter manually</span></div>
@@ -338,6 +339,7 @@ async function submitAuth(){
     document.getElementById('auth-pass').value='';
     hideAuth();
     await renderRecent();
+    updateScanQuota();
     showToast(authMode==='signin'?'Welcome back!':'Account created!');
   }catch(err){
     console.error(err);
@@ -547,6 +549,18 @@ function readFileBase64(file){
   });
 }
 
+async function updateScanQuota(){
+  try{
+    const res=await api('/scan-quota');
+    if(!res.ok)return;
+    const q=await res.json();
+    const el=document.getElementById('scan-quota');
+    el.textContent=q.limit==null?String(q.used):`${q.used}/${q.limit}`;
+    el.classList.toggle('full',q.limit!=null&&q.used>=q.limit);
+    el.style.display='';
+  }catch(err){console.error(err)}
+}
+
 async function scanBill(input){
   const file=input.files&&input.files[0];
   input.value='';
@@ -578,6 +592,7 @@ async function scanBill(input){
   }finally{
     btn.disabled=false;
     label.textContent='Scan Bill with AI';
+    updateScanQuota();
   }
 }
 
@@ -831,6 +846,7 @@ if(resetToken){
     const me=await fetchMe();
     if(applyMe(me,document.getElementById('auth-error'))){
       await renderRecent();
+      updateScanQuota();
     }
   })().catch(console.error);
 }else{

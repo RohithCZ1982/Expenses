@@ -50,6 +50,8 @@ body{font-family:var(--ff-body);background:var(--cream);color:var(--ink);font-si
 .btn-scan:hover{background:var(--gold2)}
 .btn-scan:active{transform:scale(.98)}
 .btn-scan:disabled{opacity:.6;cursor:wait}
+.scan-quota{background:#fff;border:1px solid var(--gold);border-radius:10px;padding:1px 8px;font-size:11px;font-weight:500;color:var(--ink2)}
+.scan-quota.full{background:var(--rose);border-color:var(--rose);color:#fff}
 .scan-divider{display:flex;align-items:center;gap:10px;margin-bottom:14px;color:var(--ink3);font-size:11px;letter-spacing:.04em;text-transform:uppercase}
 .scan-divider::before,.scan-divider::after{content:'';flex:1;height:1px;background:var(--cream3)}
 

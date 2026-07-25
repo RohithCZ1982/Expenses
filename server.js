@@ -487,6 +487,21 @@ function sniffFileType(base64) {
   return null;
 }
 
+// Current user's scans used this month and their limit (null = unlimited/admin)
+app.get('/api/scan-quota', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT COALESCE((SELECT scan_limit FROM user_access WHERE user_id = $1), $2)::int AS lim,
+              (SELECT COUNT(*) FROM ai_usage WHERE user_id = $1
+                AND created_at >= DATE_TRUNC('month', CURRENT_DATE))::int AS used`,
+      [req.userId, DEFAULT_SCAN_LIMIT]
+    );
+    res.json({ used: rows[0].used, limit: req.isAdmin ? null : rows[0].lim });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/scan-bill', requireAuth, async (req, res) => {
   const { image, mimeType } = req.body;
   if (!image) {
