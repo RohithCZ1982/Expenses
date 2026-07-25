@@ -322,6 +322,10 @@ app.post('/api/admin/users/:id/status', verifyJwt, requireAdmin, async (req, res
     return res.status(400).json({ error: 'Status must be approved, rejected, pending or deactivated' });
   }
   try {
+    const target = await pool.query('SELECT email FROM user_access WHERE user_id = $1', [req.params.id]);
+    if (target.rows[0] && isAdminEmail(target.rows[0].email)) {
+      return res.status(400).json({ error: 'The admin account cannot be changed' });
+    }
     const { rowCount } = await pool.query(
       'UPDATE user_access SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE user_id = $2',
       [status, req.params.id]
