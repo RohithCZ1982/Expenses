@@ -393,6 +393,13 @@ async function initDB() {
       ALTER TABLE user_access ADD COLUMN IF NOT EXISTS scan_limit INTEGER;
       CREATE INDEX IF NOT EXISTS idx_expenses_user ON expenses(user_id, date);
       CREATE INDEX IF NOT EXISTS idx_ai_usage_user ON ai_usage(user_id, created_at);
+      CREATE TABLE IF NOT EXISTS budgets (
+        user_id TEXT NOT NULL,
+        category TEXT NOT NULL,
+        amount DECIMAL NOT NULL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (user_id, category)
+      );
     `;
     await pool.query(query);
 
@@ -421,11 +428,86 @@ app.get('/api/expenses', requireAuth, async (req, res) => {
 
 // Add expense for the signed-in user
 app.post('/api/expenses', requireAuth, async (req, res) => {
-  const { id, date, amount, category, note } = req.body;
+  const { id, date, amount, category, note, force } = req.body;
   try {
+    // Duplicate check: same user, date and amount already logged — a common
+    // slip when two family members scan the same bill, or a double-tap.
+    // Skipped when the client confirms via force after showing the warning.
+    if (!force) {
+      const dupe = await pool.query(
+        'SELECT id, category, note FROM expenses WHERE user_id = $1 AND date = $2::DATE AND amount = $3 LIMIT 1',
+        [req.userId, date, amount]
+      );
+      if (dupe.rows.length) {
+        const existing = dupe.rows[0];
+        return res.status(409).json({
+          duplicate: true,
+          error: `You already logged ₹${amount} on this date (${existing.category}${existing.note ? ' · ' + existing.note : ''}) — add anyway?`,
+        });
+      }
+    }
     const query = 'INSERT INTO expenses (id, date, amount, category, note, user_id) VALUES ($1, $2::DATE, $3, $4, $5, $6) RETURNING id, TO_CHAR(date, \'YYYY-MM-DD\') as date, amount, category, note';
     const result = await pool.query(query, [id, date, amount, category, note || null, req.userId]);
     res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Edit an existing expense (only the signed-in user's own)
+app.put('/api/expenses/:id', requireAuth, async (req, res) => {
+  const { date, amount, category, note } = req.body;
+  if (!date || !amount || !(amount > 0) || !category) {
+    return res.status(400).json({ error: 'Date, amount and category are required' });
+  }
+  try {
+    const query = `UPDATE expenses SET date = $1::DATE, amount = $2, category = $3, note = $4
+                    WHERE id = $5 AND user_id = $6
+                    RETURNING id, TO_CHAR(date, 'YYYY-MM-DD') as date, amount, category, note`;
+    const result = await pool.query(query, [date, amount, category, note || null, req.params.id, req.userId]);
+    if (!result.rows.length) return res.status(404).json({ error: 'Expense not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Monthly budgets — 'Overall' is a reserved pseudo-category for the
+// whole-month total; the rest must match a known expense category
+const OVERALL_BUDGET_KEY = 'Overall';
+
+app.get('/api/budgets', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT category, amount::float AS amount FROM budgets WHERE user_id = $1',
+      [req.userId]
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/budgets/:category', requireAuth, async (req, res) => {
+  const category = req.params.category;
+  const amount = parseFloat(req.body?.amount);
+  if (category !== OVERALL_BUDGET_KEY && !EXPENSE_CATEGORIES.includes(category)) {
+    return res.status(400).json({ error: 'Unknown category' });
+  }
+  if (!Number.isFinite(amount) || amount < 0) {
+    return res.status(400).json({ error: 'Amount must be a non-negative number' });
+  }
+  try {
+    if (amount === 0) {
+      await pool.query('DELETE FROM budgets WHERE user_id = $1 AND category = $2', [req.userId, category]);
+    } else {
+      await pool.query(
+        `INSERT INTO budgets (user_id, category, amount) VALUES ($1, $2, $3)
+         ON CONFLICT (user_id, category) DO UPDATE SET amount = $3, updated_at = CURRENT_TIMESTAMP`,
+        [req.userId, category, amount]
+      );
+    }
+    res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
