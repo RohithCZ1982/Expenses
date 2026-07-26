@@ -175,7 +175,7 @@
       <input class="form-input search-input" type="text" id="search-q" placeholder="Search category or note…" oninput="onSearchInput()">
       <button class="search-clear" id="search-clear" style="display:none" onclick="clearSearch()" title="Clear search">×</button>
     </div>
-    <select class="sum-select" id="search-cat" onchange="renderRecent().catch(console.error)">
+    <select class="sum-select" id="search-cat" onchange="renderExpenseList(expensesCache)">
       <option value="">All categories</option>
     </select>
   </div>
@@ -580,7 +580,7 @@ function formatAmt(n){return '₹'+Math.round(n).toLocaleString('en-IN')}
 const todayStr=()=>new Date().toISOString().slice(0,10);
 
 document.getElementById('f-date').value=todayStr();
-document.getElementById('f-date').addEventListener('change',()=>renderRecent().catch(console.error));
+document.getElementById('f-date').addEventListener('change',()=>renderExpenseList(expensesCache));
 
 document.getElementById('search-cat').innerHTML='<option value="">All categories</option>'+
   CATS.map(c=>`<option value="${esc(c.name)}">${c.emoji} ${esc(c.name)}</option>`).join('');
@@ -602,7 +602,7 @@ function editExpense(id){
   document.querySelector('#screen-entry .btn-add').textContent='Save Changes';
   document.getElementById('edit-cancel').style.display='';
   document.querySelector('.form-card').scrollIntoView({behavior:'smooth',block:'start'});
-  renderRecent().catch(console.error);
+  renderExpenseList(expensesCache);
 }
 
 function cancelEdit(){
@@ -613,18 +613,24 @@ function cancelEdit(){
   document.getElementById('f-date').value=todayStr();
   document.querySelector('#screen-entry .btn-add').textContent='Add Expense';
   document.getElementById('edit-cancel').style.display='none';
-  renderRecent().catch(console.error);
+  renderExpenseList(expensesCache);
 }
 
+// Search/filter/date changes never need a network round-trip — the data
+// is already in expensesCache, so this just re-filters and re-renders it.
+// The search box is debounced on top since it fires on every keystroke.
+let searchDebounceTimer=null;
 function onSearchInput(){
   document.getElementById('search-clear').style.display=document.getElementById('search-q').value?'':'none';
-  renderRecent().catch(console.error);
+  clearTimeout(searchDebounceTimer);
+  searchDebounceTimer=setTimeout(()=>renderExpenseList(expensesCache),150);
 }
 
 function clearSearch(){
   document.getElementById('search-q').value='';
   document.getElementById('search-clear').style.display='none';
-  renderRecent().catch(console.error);
+  clearTimeout(searchDebounceTimer);
+  renderExpenseList(expensesCache);
 }
 
 let acIdx=-1;
@@ -716,7 +722,6 @@ async function scanBill(input){
     if(data.amount)document.getElementById('f-amount').value=data.amount;
     if(data.category)document.getElementById('f-cat').value=data.category;
     if(data.owner)document.getElementById('f-note').value=data.owner;
-    await renderRecent();
     showToast('Bill scanned! Review details and tap Add Expense');
   }catch(err){
     console.error(err);
@@ -791,11 +796,18 @@ async function deleteExpense(id){
   }
 }
 
+// Fetches fresh data from the server — use only after something actually
+// changed (add/edit/delete) or on first load. Pure view changes (typing in
+// search, switching category/date) should call renderExpenseList(expensesCache)
+// directly instead — the data hasn't changed, so there's nothing to refetch.
 async function renderRecent(){
+  renderExpenseList(await loadExpenses());
+}
+
+function renderExpenseList(all){
   const selectedDate=document.getElementById('f-date').value;
   const q=(document.getElementById('search-q').value||'').trim().toLowerCase();
   const filterCat=document.getElementById('search-cat').value;
-  const all=await loadExpenses();
   const el=document.getElementById('recent-list');
   const titleEl=document.getElementById('recent-title');
   let arr;

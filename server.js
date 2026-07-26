@@ -822,6 +822,23 @@ app.delete('/api/expenses/:id', requireAuth, async (req, res) => {
   }
 });
 
+// The rate limiters above only ever add entries — a key whose hits have all
+// aged out is never removed unless that same key is queried again, so an IP
+// or email that hits an endpoint once and never returns sits in memory
+// forever. Periodically sweep both Maps and drop anything fully expired.
+function sweepRateMap(map, maxWindowMs) {
+  const now = Date.now();
+  for (const [key, hits] of map) {
+    const fresh = hits.filter(t => now - t < maxWindowMs);
+    if (fresh.length === 0) map.delete(key);
+    else if (fresh.length !== hits.length) map.set(key, fresh);
+  }
+}
+setInterval(() => {
+  sweepRateMap(authRateHits, 60 * 60 * 1000); // longest auth window in use is 60 min
+  sweepRateMap(scanHits, SCAN_WINDOW_MS);
+}, 30 * 60 * 1000);
+
 app.listen(PORT, async () => {
   console.log(`Server running on http://localhost:${PORT}`);
   console.log(`Neon Auth configured: ${NEON_AUTH_URL ? 'yes (' + NEON_AUTH_URL + ')' : 'NO — set NEON_AUTH_URL'}`);
