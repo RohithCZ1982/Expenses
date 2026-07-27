@@ -504,9 +504,12 @@ async function loadAdminUsers(){
       const uid=esc(u.user_id);
       const isSelf=(u.email||'').toLowerCase()===myEmail.toLowerCase();
       const isActive=u.status==='approved';
-      const lastLogin=u.last_login_at
-        ?new Date(u.last_login_at).toLocaleString('en-IN',{day:'numeric',month:'short',year:'numeric',hour:'numeric',minute:'2-digit'})
-        :'Never';
+      let lastLoginDate='Never',lastLoginTime='';
+      if(u.last_login_at){
+        const dt=new Date(u.last_login_at);
+        lastLoginDate=dt.toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});
+        lastLoginTime=dt.toLocaleTimeString('en-IN',{hour:'numeric',minute:'2-digit'});
+      }
       let actions='';
       if(isSelf)actions='<span style="font-size:10px;color:#8a8480">You (admin)</span>';
       else if(u.status==='pending')actions=`<button class="user-btn approve" onclick="setUserStatus('${uid}','approved')">Approve</button><button class="user-btn reject" onclick="setUserStatus('${uid}','rejected')">Reject</button>`;
@@ -515,7 +518,7 @@ async function loadAdminUsers(){
       return`<tr>
         <td><div style="font-weight:500">${name}</div><div style="font-size:10px;color:#8a8480">${esc(u.email||'')}<br>Joined ${d}</div></td>
         <td><span class="status-dot ${isActive?'on':'off'}" title="${isActive?'Active':'Inactive'}"></span><span class="user-badge ${esc(u.status)}">${esc(u.status)}</span></td>
-        <td style="white-space:nowrap;font-size:11.5px;color:#4a4642">${lastLogin}</td>
+        <td style="white-space:nowrap;font-size:11.5px;color:#4a4642">${esc(lastLoginDate)}${lastLoginTime?`<div style="font-size:10px;color:#8a8480">${esc(lastLoginTime)}</div>`:''}</td>
         <td>${u.scans}<div style="font-size:10px;color:#8a8480">${u.month_scans} this month</div></td>
         <td>${isSelf?'<span style="font-size:10px;color:#8a8480">—</span>':`<button class="user-btn" onclick="changeLimit('${uid}',${u.scan_limit},'${esc(u.email||'')}')" title="Change monthly scan limit">${u.scan_limit} ✎</button>`}</td>
         <td style="white-space:nowrap">$${u.cost_usd.toFixed(4)}<div style="font-size:10px;color:#8a8480">$${u.month_cost_usd.toFixed(4)} this month</div></td>
