@@ -450,6 +450,16 @@ async function initDB() {
     // to a signed-in user (idempotent — new rows always carry user_id)
     await pool.query('DELETE FROM expenses WHERE user_id IS NULL');
 
+    // One-time (idempotent) cleanup for categories saved before case
+    // normalization existed — e.g. "Petrol" and "petrol" as separate
+    // categories. INITCAP title-cases everything except the "EMI" acronym,
+    // which must stay uppercase rather than becoming "Emi".
+    await pool.query(`
+      UPDATE expenses
+      SET category = CASE WHEN UPPER(category) = 'EMI' THEN 'EMI' ELSE INITCAP(category) END
+      WHERE category <> CASE WHEN UPPER(category) = 'EMI' THEN 'EMI' ELSE INITCAP(category) END
+    `);
+
     console.log('Database initialized');
   } catch (err) {
     console.error('DB init error:', err);
@@ -471,7 +481,8 @@ app.get('/api/expenses', requireAuth, async (req, res) => {
 
 // Add expense for the signed-in user
 app.post('/api/expenses', requireAuth, async (req, res) => {
-  const { id, date, amount, category, note, force } = req.body;
+  const { id, date, amount, note, force } = req.body;
+  const category = normalizeCategory(req.body.category);
   try {
     // Duplicate check: same user, date and amount already logged — a common
     // slip when two family members scan the same bill, or a double-tap.
@@ -499,10 +510,11 @@ app.post('/api/expenses', requireAuth, async (req, res) => {
 
 // Edit an existing expense (only the signed-in user's own)
 app.put('/api/expenses/:id', requireAuth, async (req, res) => {
-  const { date, amount, category, note } = req.body;
-  if (!date || !amount || !(amount > 0) || !category) {
+  const { date, amount, note } = req.body;
+  if (!date || !amount || !(amount > 0) || !req.body.category) {
     return res.status(400).json({ error: 'Date, amount and category are required' });
   }
+  const category = normalizeCategory(req.body.category);
   try {
     const query = `UPDATE expenses SET date = $1::DATE, amount = $2, category = $3, note = $4
                     WHERE id = $5 AND user_id = $6
@@ -562,6 +574,19 @@ const EXPENSE_CATEGORIES = [
   'Shopping', 'Entertainment', 'Travel', 'Education', 'Rent', 'EMI',
   'Subscriptions', 'Gym & Fitness', 'Gifts', 'Personal Care', 'Other',
 ];
+
+// Category names are otherwise case-sensitive, so "Petrol" and "petrol"
+// typed on different occasions would be tracked as two separate categories.
+// If the typed name matches a preset case-insensitively, snap it to that
+// preset's exact casing (this also protects acronyms like "EMI" from being
+// title-cased into "Emi"); otherwise title-case it so any custom category
+// converges to one consistent spelling no matter how it was typed.
+function normalizeCategory(raw) {
+  const trimmed = String(raw || '').trim();
+  const preset = EXPENSE_CATEGORIES.find(c => c.toLowerCase() === trimmed.toLowerCase());
+  if (preset) return preset;
+  return trimmed.replace(/\w\S*/g, w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+}
 
 // USD per 1M tokens; update when Google changes pricing
 const GEMINI_PRICING = {
