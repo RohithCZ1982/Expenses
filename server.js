@@ -159,7 +159,7 @@ async function handleCredentialAuth(req, res, path) {
     const jwt = headers.get('set-auth-jwt') || await getJwtForSession(cred, requestOrigin(req));
     if (!jwt) return res.status(502).json({ error: 'Signed in, but could not get an access token from the auth service' });
     if (data.user?.id) {
-      try { await ensureAccess(data.user.id, email.toLowerCase()); }
+      try { await ensureAccess(data.user.id, email.toLowerCase(), true); }
       catch (err) { console.error('Could not record access row:', err.message); }
     }
     res.json({ accessToken: jwt, refreshToken: makeRefreshCred(cred.t, cred.c), userId: data.user?.id });
@@ -270,14 +270,20 @@ function isAdminEmail(email) {
   return !!ADMIN_EMAIL && (email || '').toLowerCase() === ADMIN_EMAIL;
 }
 
-// Upsert the user's access row and return their current status
-async function ensureAccess(userId, email) {
+// Upsert the user's access row and return their current status.
+// recordLogin is true only when called right after an actual sign-in/sign-up
+// (not on every authenticated request) so last_login_at reflects real logins
+// without writing to the DB on every API call.
+async function ensureAccess(userId, email, recordLogin) {
   const initial = isAdminEmail(email) ? 'approved' : 'pending';
   const { rows } = await pool.query(
-    `INSERT INTO user_access (user_id, email, status) VALUES ($1, $2, $3)
-     ON CONFLICT (user_id) DO UPDATE SET email = COALESCE(EXCLUDED.email, user_access.email)
+    `INSERT INTO user_access (user_id, email, status, last_login_at)
+     VALUES ($1, $2, $3, CASE WHEN $4 THEN CURRENT_TIMESTAMP ELSE NULL END)
+     ON CONFLICT (user_id) DO UPDATE SET
+       email = COALESCE(EXCLUDED.email, user_access.email),
+       last_login_at = CASE WHEN $4 THEN CURRENT_TIMESTAMP ELSE user_access.last_login_at END
      RETURNING status`,
-    [userId, email || null, initial]
+    [userId, email || null, initial, !!recordLogin]
   );
   return rows[0].status;
 }
@@ -338,7 +344,7 @@ app.get('/api/me', verifyJwt, (req, res) => {
 app.get('/api/admin/users', verifyJwt, requireAdmin, async (req, res) => {
   try {
     const { rows } = await pool.query(`
-      SELECT ua.user_id, ua.email, ua.status, ua.created_at,
+      SELECT ua.user_id, ua.email, ua.status, ua.created_at, ua.last_login_at,
              COALESCE(ua.scan_limit, ${DEFAULT_SCAN_LIMIT})::int AS scan_limit,
              COALESCE(u.scans, 0) AS scans,
              COALESCE(u.cost, 0)::float AS cost_usd,
@@ -434,6 +440,7 @@ async function initDB() {
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
       ALTER TABLE user_access ADD COLUMN IF NOT EXISTS scan_limit INTEGER;
+      ALTER TABLE user_access ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMP;
       CREATE INDEX IF NOT EXISTS idx_expenses_user ON expenses(user_id, date);
       CREATE INDEX IF NOT EXISTS idx_ai_usage_user ON ai_usage(user_id, created_at);
       CREATE TABLE IF NOT EXISTS budgets (

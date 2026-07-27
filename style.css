@@ -93,6 +93,9 @@ input[type="date"].form-input{-webkit-appearance:none;appearance:none}
 .auth-forgot a:hover{color:var(--gold);text-decoration:underline}
 .auth-error.ok{color:var(--teal)}
 .tbl-note{color:var(--ink3);text-align:center;padding:16px;font-size:12px}
+.status-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:middle}
+.status-dot.on{background:#2ea043;box-shadow:0 0 0 2px #2ea04322}
+.status-dot.off{background:var(--rose);box-shadow:0 0 0 2px rgba(200,91,74,.13)}
 .user-badge{padding:2px 8px;border-radius:10px;font-size:10px;font-weight:500;text-transform:capitalize}
 .user-badge.approved{background:#e2f2e9;color:var(--teal)}
 .user-badge.pending{background:var(--gold3);color:#7a5c2a}

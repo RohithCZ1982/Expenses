@@ -122,7 +122,7 @@
   </div>
   <div class="chart-card" style="padding:12px;overflow-x:auto">
     <table class="cat-table" id="users-table">
-      <thead><tr><th>User</th><th>Status</th><th>AI Scans</th><th>Limit</th><th>AI Cost</th><th></th></tr></thead>
+      <thead><tr><th>User</th><th>Status</th><th>Last Login</th><th>AI Scans</th><th>Limit</th><th>AI Cost</th><th></th></tr></thead>
       <tbody></tbody>
     </table>
   </div>
@@ -490,12 +490,12 @@ let myEmail='';
 
 async function loadAdminUsers(){
   const tbody=document.querySelector('#users-table tbody');
-  tbody.innerHTML='<tr><td colspan="5" class="tbl-note">Loading…</td></tr>';
+  tbody.innerHTML='<tr><td colspan="7" class="tbl-note">Loading…</td></tr>';
   try{
     const res=await api('/admin/users');
-    if(!res.ok){tbody.innerHTML='<tr><td colspan="5" class="tbl-note">Could not load users</td></tr>';return}
+    if(!res.ok){tbody.innerHTML='<tr><td colspan="7" class="tbl-note">Could not load users</td></tr>';return}
     const users=await res.json();
-    if(!users.length){tbody.innerHTML='<tr><td colspan="5" class="tbl-note">No sign-ups yet</td></tr>';return}
+    if(!users.length){tbody.innerHTML='<tr><td colspan="7" class="tbl-note">No sign-ups yet</td></tr>';return}
     let totCost=0,totScans=0;
     tbody.innerHTML=users.map(u=>{
       const d=new Date(u.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});
@@ -503,6 +503,10 @@ async function loadAdminUsers(){
       totCost+=u.cost_usd;totScans+=u.scans;
       const uid=esc(u.user_id);
       const isSelf=(u.email||'').toLowerCase()===myEmail.toLowerCase();
+      const isActive=u.status==='approved';
+      const lastLogin=u.last_login_at
+        ?new Date(u.last_login_at).toLocaleString('en-IN',{day:'numeric',month:'short',year:'numeric',hour:'numeric',minute:'2-digit'})
+        :'Never';
       let actions='';
       if(isSelf)actions='<span style="font-size:10px;color:#8a8480">You (admin)</span>';
       else if(u.status==='pending')actions=`<button class="user-btn approve" onclick="setUserStatus('${uid}','approved')">Approve</button><button class="user-btn reject" onclick="setUserStatus('${uid}','rejected')">Reject</button>`;
@@ -510,14 +514,15 @@ async function loadAdminUsers(){
       else actions=`<button class="user-btn approve" onclick="setUserStatus('${uid}','approved')">${u.status==='deactivated'?'Activate':'Approve'}</button>`;
       return`<tr>
         <td><div style="font-weight:500">${name}</div><div style="font-size:10px;color:#8a8480">${esc(u.email||'')}<br>Joined ${d}</div></td>
-        <td><span class="user-badge ${esc(u.status)}">${esc(u.status)}</span></td>
+        <td><span class="status-dot ${isActive?'on':'off'}" title="${isActive?'Active':'Inactive'}"></span><span class="user-badge ${esc(u.status)}">${esc(u.status)}</span></td>
+        <td style="white-space:nowrap;font-size:11.5px;color:#4a4642">${lastLogin}</td>
         <td>${u.scans}<div style="font-size:10px;color:#8a8480">${u.month_scans} this month</div></td>
         <td>${isSelf?'<span style="font-size:10px;color:#8a8480">—</span>':`<button class="user-btn" onclick="changeLimit('${uid}',${u.scan_limit},'${esc(u.email||'')}')" title="Change monthly scan limit">${u.scan_limit} ✎</button>`}</td>
         <td style="white-space:nowrap">$${u.cost_usd.toFixed(4)}<div style="font-size:10px;color:#8a8480">$${u.month_cost_usd.toFixed(4)} this month</div></td>
         <td style="white-space:nowrap">${actions}</td>
       </tr>`;
     }).join('')+
-    `<tr><td style="font-weight:500">Total</td><td></td><td style="font-weight:500">${totScans}</td><td></td><td style="font-weight:500">$${totCost.toFixed(4)}</td><td></td></tr>`;
+    `<tr><td style="font-weight:500">Total</td><td></td><td></td><td style="font-weight:500">${totScans}</td><td></td><td style="font-weight:500">$${totCost.toFixed(4)}</td><td></td></tr>`;
   }catch(err){
     console.error(err);
     tbody.innerHTML='<tr><td colspan="5" class="tbl-note">Could not load users</td></tr>';
