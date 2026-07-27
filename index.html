@@ -67,6 +67,9 @@
   <button class="nav-btn nav-logout" id="btn-refresh" onclick="refreshCurrent()" title="Refresh" aria-label="Refresh">
     <svg id="refresh-icon" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
   </button>
+  <button class="nav-btn nav-logout" id="btn-install" style="display:none" onclick="installApp()" title="Install App" aria-label="Install App">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-8 9 8"/><path d="M5 10v9a1 1 0 001 1h12a1 1 0 001-1v-9"/><line x1="12" y1="15" x2="12" y2="19"/><line x1="10" y1="17" x2="14" y2="17"/></svg>
+  </button>
   <button class="nav-btn nav-logout" onclick="showManual()" title="User Guide" aria-label="User Guide">
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
   </button>
@@ -1143,6 +1146,32 @@ async function renderManualPdf(){
     console.error('PDF render error:',err);
     container.innerHTML='<div class="manual-loading">Could not display the guide here — use the download button above.</div>';
   }
+}
+
+// Android/Chrome: capture the native install prompt instead of leaving
+// users to find "Add to Home screen" buried in the browser's own menu.
+// iOS never fires this event (no such API there), so the button simply
+// never appears — the manual still covers the manual Share > Add to
+// Home Screen steps for iOS.
+let deferredInstallPrompt=null;
+if(!window.matchMedia('(display-mode: standalone)').matches){
+  window.addEventListener('beforeinstallprompt',(e)=>{
+    e.preventDefault();
+    deferredInstallPrompt=e;
+    document.getElementById('btn-install').style.display='';
+  });
+}
+window.addEventListener('appinstalled',()=>{
+  deferredInstallPrompt=null;
+  document.getElementById('btn-install').style.display='none';
+});
+async function installApp(){
+  if(!deferredInstallPrompt)return;
+  const btn=document.getElementById('btn-install');
+  btn.style.display='none';
+  deferredInstallPrompt.prompt();
+  try{ await deferredInstallPrompt.userChoice; }catch(e){}
+  deferredInstallPrompt=null;
 }
 
 function showManual(){
