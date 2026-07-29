@@ -521,11 +521,11 @@ async function loadAdminUsers(){
         <td style="white-space:nowrap;font-size:11.5px;color:#4a4642">${esc(lastLoginDate)}${lastLoginTime?`<div style="font-size:10px;color:#8a8480">${esc(lastLoginTime)}</div>`:''}</td>
         <td>${u.scans}<div style="font-size:10px;color:#8a8480">${u.month_scans} this month</div></td>
         <td>${isSelf?'<span style="font-size:10px;color:#8a8480">—</span>':`<button class="user-btn" onclick="changeLimit('${uid}',${u.scan_limit},'${esc(u.email||'')}')" title="Change monthly scan limit">${u.scan_limit} ✎</button>`}</td>
-        <td style="white-space:nowrap">$${u.cost_usd.toFixed(4)}<div style="font-size:10px;color:#8a8480">$${u.month_cost_usd.toFixed(4)} this month</div></td>
+        <td style="white-space:nowrap">${formatAiCost(u.cost_usd)}<div style="font-size:10px;color:#8a8480">${formatAiCost(u.month_cost_usd)} this month</div></td>
         <td style="white-space:nowrap">${actions}</td>
       </tr>`;
     }).join('')+
-    `<tr><td style="font-weight:500">Total</td><td></td><td></td><td style="font-weight:500">${totScans}</td><td></td><td style="font-weight:500">$${totCost.toFixed(4)}</td><td></td></tr>`;
+    `<tr><td style="font-weight:500">Total</td><td></td><td></td><td style="font-weight:500">${totScans}</td><td></td><td style="font-weight:500">${formatAiCost(totCost)}</td><td></td></tr>`;
   }catch(err){
     console.error(err);
     tbody.innerHTML='<tr><td colspan="5" class="tbl-note">Could not load users</td></tr>';
@@ -600,6 +600,10 @@ async function saveExpenses(arr){
   }
 }
 function formatAmt(n){return '₹'+Math.round(n).toLocaleString('en-IN')}
+// Approximate USD->INR rate for displaying AI cost in rupees on the admin
+// Users screen; update this if it drifts noticeably from the real rate.
+const USD_TO_INR=96.5;
+function formatAiCost(usd){return '₹'+(usd*USD_TO_INR).toFixed(4)}
 const todayStr=()=>new Date().toISOString().slice(0,10);
 
 document.getElementById('f-date').value=todayStr();
