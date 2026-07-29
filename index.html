@@ -121,6 +121,14 @@
     <div class="screen-sub">Approve sign-ins and track AI usage cost</div>
   </div>
   <div class="chart-card" style="padding:12px;overflow-x:auto">
+    <div class="rate-row">
+      <span class="filter-label">USD → INR rate:</span>
+      <input type="number" id="usd-inr-rate" class="budget-input" style="width:72px" step="0.01" min="0.01">
+      <button class="user-btn rate-recalc-btn" onclick="recalcAiCost()" title="Recalculate" aria-label="Recalculate">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
+        Recalculate
+      </button>
+    </div>
     <table class="cat-table" id="users-table">
       <thead><tr><th>User</th><th>Status</th><th>Last Login</th><th>AI Scans</th><th>Limit</th><th>AI Cost</th><th></th></tr></thead>
       <tbody></tbody>
@@ -488,16 +496,39 @@ function applyMe(me,errEl){
 }
 let myEmail='';
 
+let adminUsersCache=null;
+
 async function loadAdminUsers(){
+  const rateInput=document.getElementById('usd-inr-rate');
+  if(rateInput)rateInput.value=USD_TO_INR;
   const tbody=document.querySelector('#users-table tbody');
   tbody.innerHTML='<tr><td colspan="7" class="tbl-note">Loading…</td></tr>';
   try{
     const res=await api('/admin/users');
     if(!res.ok){tbody.innerHTML='<tr><td colspan="7" class="tbl-note">Could not load users</td></tr>';return}
     const users=await res.json();
-    if(!users.length){tbody.innerHTML='<tr><td colspan="7" class="tbl-note">No sign-ups yet</td></tr>';return}
-    let totCost=0,totScans=0;
-    tbody.innerHTML=users.map(u=>{
+    adminUsersCache=users;
+    renderAdminUsersTable(users);
+  }catch(err){
+    console.error(err);
+    tbody.innerHTML='<tr><td colspan="7" class="tbl-note">Could not load users</td></tr>';
+  }
+}
+
+function recalcAiCost(){
+  const rateInput=document.getElementById('usd-inr-rate');
+  const rate=parseFloat(rateInput&&rateInput.value);
+  if(!rate||!isFinite(rate)||rate<=0){showToast('Enter a valid rate');return}
+  USD_TO_INR=rate;
+  localStorage.setItem('usdInrRate',String(rate));
+  if(adminUsersCache)renderAdminUsersTable(adminUsersCache);
+}
+
+function renderAdminUsersTable(users){
+  const tbody=document.querySelector('#users-table tbody');
+  if(!users.length){tbody.innerHTML='<tr><td colspan="7" class="tbl-note">No sign-ups yet</td></tr>';return}
+  let totCost=0,totScans=0;
+  tbody.innerHTML=users.map(u=>{
       const d=new Date(u.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});
       const name=esc((u.email||'').split('@')[0]||u.user_id);
       totCost+=u.cost_usd;totScans+=u.scans;
@@ -524,12 +555,8 @@ async function loadAdminUsers(){
         <td style="white-space:nowrap">${formatAiCost(u.cost_usd)}<div style="font-size:10px;color:#8a8480">${formatAiCost(u.month_cost_usd)} this month</div></td>
         <td style="white-space:nowrap">${actions}</td>
       </tr>`;
-    }).join('')+
+  }).join('')+
     `<tr><td style="font-weight:500">Total</td><td></td><td></td><td style="font-weight:500">${totScans}</td><td></td><td style="font-weight:500">${formatAiCost(totCost)}</td><td></td></tr>`;
-  }catch(err){
-    console.error(err);
-    tbody.innerHTML='<tr><td colspan="5" class="tbl-note">Could not load users</td></tr>';
-  }
 }
 
 async function changeLimit(id,current,email){
@@ -600,9 +627,10 @@ async function saveExpenses(arr){
   }
 }
 function formatAmt(n){return '₹'+Math.round(n).toLocaleString('en-IN')}
-// Approximate USD->INR rate for displaying AI cost in rupees on the admin
-// Users screen; update this if it drifts noticeably from the real rate.
-const USD_TO_INR=96.5;
+// USD->INR rate for displaying AI cost in rupees on the admin Users screen.
+// Admin-adjustable via the rate box there and remembered across visits;
+// falls back to a rough default until they set a real one.
+let USD_TO_INR=parseFloat(localStorage.getItem('usdInrRate'))||96.5;
 function formatAiCost(usd){return '₹'+(usd*USD_TO_INR).toFixed(4)}
 const todayStr=()=>new Date().toISOString().slice(0,10);
 

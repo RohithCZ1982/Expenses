@@ -161,6 +161,10 @@ input[type="date"].form-input{-webkit-appearance:none;appearance:none}
 
 .filter-row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;align-items:center}
 .filter-label{font-size:11px;color:var(--ink3);font-weight:500;margin-right:2px}
+
+.rate-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+.rate-recalc-btn{display:inline-flex;align-items:center;gap:5px}
+.rate-recalc-btn svg{flex-shrink:0}
 .filter-chip{padding:5px 10px;border:1px solid var(--cream3);border-radius:20px;font-size:12px;background:var(--cream);color:var(--ink2);cursor:pointer;transition:all .15s;font-family:var(--ff-body)}
 .filter-chip.active{background:var(--ink);color:#fff;border-color:var(--ink)}
 .filter-chip:hover:not(.active){border-color:var(--gold);color:var(--gold)}
