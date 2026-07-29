@@ -728,26 +728,28 @@ JSON output only: {"amount": final total paid as number, "date": "YYYY-MM-DD" or
     : ['gemini-flash-latest', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
 
   try {
-    // maxOutputTokens caps the (most expensive) output side; thinkingBudget 0
-    // skips reasoning tokens where supported. Some models reject parts of
-    // this config with a 400, so each model gets a lean retry without the
-    // optional fields before falling through to the next model.
-    const makeBody = (model, lean) => JSON.stringify({
-      contents: [{
-        parts: [
-          { text: prompt },
-          { inline_data: { mime_type: mt, data: image } },
-        ],
-      }],
-      generationConfig: lean
-        ? { temperature: 0, response_mime_type: 'application/json' }
-        : {
-            temperature: 0,
-            response_mime_type: 'application/json',
-            maxOutputTokens: 200,
-            ...(/2\.5|latest/.test(model) ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
-          },
-    });
+    // maxOutputTokens caps the (most expensive) output side. thinkingConfig
+    // with thinkingBudget 0 is ALWAYS included on thinking-capable models,
+    // in both the normal and lean bodies — Gemini 2.5 models default to
+    // Auto/dynamic thinking when this field is simply omitted, which bills
+    // hidden reasoning tokens at the (expensive) output rate for a task that
+    // needs none. "Lean" only drops maxOutputTokens, which is what some
+    // models actually reject with a 400 when combined with structured output.
+    const makeBody = (model, lean) => {
+      const supportsThinking = /2\.5|latest/.test(model);
+      const generationConfig = { temperature: 0, response_mime_type: 'application/json' };
+      if (!lean) generationConfig.maxOutputTokens = 200;
+      if (supportsThinking) generationConfig.thinkingConfig = { thinkingBudget: 0 };
+      return JSON.stringify({
+        contents: [{
+          parts: [
+            { text: prompt },
+            { inline_data: { mime_type: mt, data: image } },
+          ],
+        }],
+        generationConfig,
+      });
+    };
 
     const attempts = [];
     for (const model of models) {
@@ -757,6 +759,7 @@ JSON output only: {"amount": final total paid as number, "date": "YYYY-MM-DD" or
     let geminiRes = null;
     let lastErr = '';
     let usedModel = models[0];
+    let data = null;
     for (const [model, lean] of attempts) {
       usedModel = model;
       geminiRes = await fetch(
@@ -767,15 +770,23 @@ JSON output only: {"amount": final total paid as number, "date": "YYYY-MM-DD" or
           body: makeBody(model, lean),
         }
       );
-      if (geminiRes.ok) break;
-      lastErr = await geminiRes.text();
+      const bodyText = await geminiRes.text();
+      // A failed attempt can still have consumed billable tokens (the
+      // request was processed before being rejected) — record whatever
+      // Google reports as used for THIS attempt, not just the winning one,
+      // so our cost tracking can't undercount what's actually billed.
+      let parsedBody = null;
+      try { parsedBody = JSON.parse(bodyText); } catch {}
+      if (parsedBody?.usageMetadata) recordAiUsage(req.userId, model, parsedBody.usageMetadata);
+      if (geminiRes.ok) { data = parsedBody; break; }
+      lastErr = bodyText;
       console.error(`Gemini API error (model ${model}${lean ? ', lean config' : ''}):`, geminiRes.status, lastErr);
       // 400: config or key problem — retry lean, then next model; 404: model
       // unknown — next model; anything else is not worth retrying
       if (geminiRes.status !== 404 && geminiRes.status !== 400) break;
     }
 
-    if (!geminiRes.ok) {
+    if (!data) {
       let apiMsg = '';
       try { apiMsg = JSON.parse(lastErr)?.error?.message || ''; } catch {}
       const hint = geminiRes.status === 404
@@ -785,10 +796,6 @@ JSON output only: {"amount": final total paid as number, "date": "YYYY-MM-DD" or
           : '';
       return res.status(502).json({ error: 'AI service error (' + geminiRes.status + ')' + hint });
     }
-
-    const data = await geminiRes.json();
-    // Tokens are billed even if the image turns out not to be a bill
-    recordAiUsage(req.userId, usedModel, data?.usageMetadata);
     // Thinking models can emit multiple parts; take the first with text
     const parts = data?.candidates?.[0]?.content?.parts || [];
     const text = parts.map(p => p?.text).find(t => t);
