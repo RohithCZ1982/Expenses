@@ -736,7 +736,11 @@ JSON output only: {"amount": final total paid as number, "date": "YYYY-MM-DD" or
     // needs none. "Lean" only drops maxOutputTokens, which is what some
     // models actually reject with a 400 when combined with structured output.
     const makeBody = (model, lean) => {
-      const supportsThinking = /2\.5|latest/.test(model);
+      // Assume thinking support by default (true for virtually every current
+      // Gemini model) and only exclude the known older non-thinking
+      // generations — an allowlist regex here silently breaks every time a
+      // new model version ships (e.g. missed gemini-3.5-flash).
+      const supportsThinking = !/^gemini-(1\.|2\.0)/.test(model);
       const generationConfig = { temperature: 0, response_mime_type: 'application/json' };
       if (!lean) generationConfig.maxOutputTokens = 200;
       if (supportsThinking) generationConfig.thinkingConfig = { thinkingBudget: 0 };
@@ -807,7 +811,16 @@ JSON output only: {"amount": final total paid as number, "date": "YYYY-MM-DD" or
 
     let parsed;
     try {
-      parsed = JSON.parse(text.replace(/^```json\s*|```\s*$/g, ''));
+      const cleaned = text.replace(/^```json\s*|```\s*$/g, '').trim();
+      try {
+        parsed = JSON.parse(cleaned);
+      } catch {
+        // Model added stray text/markdown around the JSON despite the
+        // response_mime_type request — pull out the first {...} object.
+        const match = cleaned.match(/\{[\s\S]*\}/);
+        if (!match) throw new Error('no JSON object found in response');
+        parsed = JSON.parse(match[0]);
+      }
       if (Array.isArray(parsed)) parsed = parsed[0] || {};
     } catch (e) {
       console.error('Failed to parse Gemini response:', text.slice(0, 500));
