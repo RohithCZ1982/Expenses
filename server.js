@@ -725,7 +725,7 @@ JSON output only: {"amount": final total paid as number, "date": "YYYY-MM-DD" or
   // through to the next candidate on 404. GEMINI_MODEL env var overrides.
   const models = process.env.GEMINI_MODEL
     ? [process.env.GEMINI_MODEL]
-    : ['gemini-flash-latest', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+    : ['gemini-flash-latest', 'gemini-2.5-flash', 'gemini-3.5-flash', 'gemini-2.5-flash-lite'];
 
   try {
     // maxOutputTokens caps the (most expensive) output side. thinkingConfig
@@ -790,7 +790,7 @@ JSON output only: {"amount": final total paid as number, "date": "YYYY-MM-DD" or
       let apiMsg = '';
       try { apiMsg = JSON.parse(lastErr)?.error?.message || ''; } catch {}
       const hint = geminiRes.status === 404
-        ? ' — no available Gemini model found; set GEMINI_MODEL env var to a model your API key supports'
+        ? ' — no available Gemini model found for this API key' + (apiMsg ? ' (' + apiMsg.slice(0, 180) + ')' : '') + '; set GEMINI_MODEL env var to a model your API key supports'
         : apiMsg
           ? ' — ' + apiMsg.slice(0, 180)
           : '';
