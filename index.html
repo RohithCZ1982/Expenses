@@ -229,12 +229,18 @@
   </div>
 
   <div class="chart-card">
+    <div class="chart-title"><span>Monthly overview — last 6 months</span></div>
+    <div class="chart-wrap" style="height:160px"><canvas id="chart-month"></canvas></div>
+  </div>
+
+  <div class="chart-card">
     <div class="chart-title"><span>Monthly summary</span></div>
+    <div style="font-size:11px;color:#8a8480;margin-top:-6px;margin-bottom:6px">Filters the sections below</div>
     <div class="filter-row" style="margin:10px 0 12px">
       <span class="filter-label">Month:</span>
-      <select class="sum-select" id="sum-month" onchange="buildMonthlySummary()"></select>
+      <select class="sum-select" id="sum-month" onchange="onReportFilterChange()"></select>
       <span class="filter-label">Year:</span>
-      <select class="sum-select" id="sum-year" onchange="buildMonthlySummary()"></select>
+      <select class="sum-select" id="sum-year" onchange="onReportFilterChange()"></select>
     </div>
     <div class="stat-grid" style="margin-bottom:0;grid-template-columns:1fr">
       <div class="stat-card">
@@ -246,18 +252,14 @@
   </div>
 
   <div class="chart-card" id="budget-progress-card" style="display:none">
-    <div class="chart-title"><span>Budget progress — this month</span></div>
+    <div class="chart-title"><span id="budget-progress-title">Budget progress — this month</span></div>
     <div id="budget-progress-list"></div>
   </div>
 
   <div class="chart-card">
-    <div class="chart-title"><span>Daily spending — this week</span></div>
+    <div class="chart-title"><span id="daily-chart-title">Daily spending — this week</span></div>
     <div class="chart-wrap" style="height:180px"><canvas id="chart-week"></canvas></div>
-  </div>
-
-  <div class="chart-card">
-    <div class="chart-title"><span>Monthly overview — last 6 months</span></div>
-    <div class="chart-wrap" style="height:160px"><canvas id="chart-month"></canvas></div>
+    <div id="daily-chart-empty" style="display:none;text-align:center;color:#8a8480;font-size:12px;padding:16px">Select a specific month above to see daily spending.</div>
   </div>
 
   <div class="chart-card">
@@ -973,11 +975,12 @@ function buildBudgetProgress(arr){
   const card=document.getElementById('budget-progress-card');
   const entries=Object.entries(budgetsCache).filter(([,amt])=>amt>0);
   if(!entries.length){card.style.display='none';return}
-  const thisMonth=todayStr().slice(0,7);
-  const monthExp=arr.filter(e=>e.date.startsWith(thisMonth));
+  const prefix=getReportFilterPrefix();
+  const monthExp=arr.filter(e=>e.date.startsWith(prefix));
   const totalSpend=monthExp.reduce((s,e)=>s+e.amount,0);
   const catMap={};
   monthExp.forEach(e=>{catMap[e.category]=(catMap[e.category]||0)+e.amount});
+  document.getElementById('budget-progress-title').textContent=`Budget progress — ${reportFilterLabel()}`;
   document.getElementById('budget-progress-list').innerHTML=entries.map(([cat,budget])=>{
     const spend=cat===OVERALL_BUDGET_KEY?totalSpend:(catMap[cat]||0);
     const pct=budget?Math.min(100,Math.round(spend/budget*100)):0;
@@ -1010,14 +1013,37 @@ function initSummaryFilters(){
   ySel.value=[...ySel.options].some(o=>o.value===prevY)?prevY:String(now.getFullYear());
 }
 
-function buildMonthlySummary(){
+function getReportFilterPrefix(){
   const m=document.getElementById('sum-month').value;
   const y=document.getElementById('sum-year').value;
-  const prefix=m?`${y}-${m}`:`${y}`;
-  const exp=expensesCache.filter(e=>e.date.startsWith(prefix));
+  return m?`${y}-${m}`:`${y}`;
+}
+
+function isCurrentMonthSelected(){
+  const m=document.getElementById('sum-month').value;
+  const y=document.getElementById('sum-year').value;
+  const now=new Date();
+  return m===String(now.getMonth()+1).padStart(2,'0')&&y===String(now.getFullYear());
+}
+
+function reportFilterLabel(){
+  const m=document.getElementById('sum-month').value;
+  const y=document.getElementById('sum-year').value;
+  return m?`${MONTH_NAMES[parseInt(m,10)-1]} ${y}`:y;
+}
+
+function buildMonthlySummary(){
+  const exp=expensesCache.filter(e=>e.date.startsWith(getReportFilterPrefix()));
   const spend=exp.reduce((s,e)=>s+e.amount,0);
   document.getElementById('sum-spend').textContent=formatAmt(spend);
   document.getElementById('sum-spend-sub').textContent=exp.length?`${exp.length} expense${exp.length>1?'s':''}`:'No expenses';
+}
+
+function onReportFilterChange(){
+  buildMonthlySummary();
+  buildBudgetProgress(expensesCache);
+  buildDailyChart(expensesCache);
+  buildCategorySection(expensesCache,activePeriod);
 }
 
 let chartWeek,chartMonth,chartCat;
@@ -1063,12 +1089,41 @@ function hideCatNotes(){
   document.getElementById('notes-popup').classList.add('hidden');
 }
 
+function buildDailyChart(arr){
+  const m=document.getElementById('sum-month').value;
+  const y=document.getElementById('sum-year').value;
+  const canvas=document.getElementById('chart-week');
+  const emptyEl=document.getElementById('daily-chart-empty');
+  if(!m){
+    if(chartWeek){chartWeek.destroy();chartWeek=null}
+    canvas.style.display='none';
+    emptyEl.style.display='';
+    document.getElementById('daily-chart-title').textContent='Daily spending';
+    return;
+  }
+  canvas.style.display='';
+  emptyEl.style.display='none';
+  document.getElementById('daily-chart-title').textContent=`Daily spending — ${reportFilterLabel()}`;
+
+  const lastDay=new Date(parseInt(y,10),parseInt(m,10),0).getDate();
+  const dayDates=Array.from({length:lastDay},(_,i)=>`${y}-${m}-${String(i+1).padStart(2,'0')}`);
+  const dayLabels=dayDates.map((_,i)=>String(i+1));
+  const dayData=dayDates.map(d=>arr.filter(e=>e.date===d).reduce((s,e)=>s+e.amount,0));
+  const todayIdx=dayDates.indexOf(todayStr());
+  const barColors=dayData.map((_,i)=>i===todayIdx?'#c9962a':'#e4dfd5');
+
+  if(chartWeek)chartWeek.destroy();
+  chartWeek=new Chart(canvas,{
+    type:'bar',
+    data:{labels:dayLabels,datasets:[{data:dayData,backgroundColor:barColors,borderRadius:4,borderSkipped:false}]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>'₹'+Math.round(ctx.parsed.y).toLocaleString('en-IN')}}},scales:{x:{grid:{display:false},ticks:{font:{size:10},color:'#8a8480',maxRotation:0,autoSkip:true,maxTicksLimit:10}},y:{grid:{color:'#f0ede6'},ticks:{callback:v=>'₹'+Math.round(v/1000)+'k',font:{size:10},color:'#8a8480'},border:{display:false}}}}
+  });
+}
+
 async function buildDashboard(){
   const arr=await loadExpenses();
   await loadBudgets();
-  buildBudgetProgress(arr);
   initSummaryFilters();
-  buildMonthlySummary();
   console.log('Dashboard data:', arr);
   const today=todayStr();
   console.log('Today date:', today);
@@ -1087,18 +1142,6 @@ async function buildDashboard(){
   document.getElementById('stat-month').textContent=formatAmt(monthAmt);
   document.getElementById('dash-date-label').textContent=new Date().toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
 
-  const dayLabels=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-  const weekData=weekDates.map(d=>arr.filter(e=>e.date===d).reduce((s,e)=>s+e.amount,0));
-  const todayIdx=weekDates.indexOf(today);
-  const barColors=weekData.map((_,i)=>i===todayIdx?'#c9962a':'#e4dfd5');
-
-  if(chartWeek)chartWeek.destroy();
-  chartWeek=new Chart(document.getElementById('chart-week'),{
-    type:'bar',
-    data:{labels:dayLabels,datasets:[{data:weekData,backgroundColor:barColors,borderRadius:5,borderSkipped:false}]},
-    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>'₹'+Math.round(ctx.parsed.y).toLocaleString('en-IN')}}},scales:{x:{grid:{display:false},ticks:{font:{size:11},color:'#8a8480'}},y:{grid:{color:'#f0ede6'},ticks:{callback:v=>'₹'+Math.round(v/1000)+'k',font:{size:10},color:'#8a8480'},border:{display:false}}}}
-  });
-
   const months=getMonthsBack(6);
   const monthData=months.map(m=>arr.filter(e=>e.date.startsWith(m.key)).reduce((s,e)=>s+e.amount,0));
   if(chartMonth)chartMonth.destroy();
@@ -1108,22 +1151,26 @@ async function buildDashboard(){
     options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>'₹'+Math.round(ctx.parsed.y).toLocaleString('en-IN')}}},scales:{x:{grid:{display:false},ticks:{font:{size:11},color:'#8a8480'}},y:{grid:{color:'#f0ede6'},ticks:{callback:v=>'₹'+Math.round(v/1000)+'k',font:{size:10},color:'#8a8480'},border:{display:false}}}}
   });
 
-  buildCategorySection(arr,activePeriod);
+  onReportFilterChange();
 }
 
 const CAT_COLORS=['#c9962a','#2a7a72','#2b5ea7','#6b4c7a','#c85b4a','#e8874a','#4a7ab5','#2a9d6e','#7a5c2a','#5c6e7a','#7a3c5c','#3c6a5c'];
 
 function buildCategorySection(arr,period){
-  const today=new Date();
-  const todayStr2=today.toISOString().slice(0,10);
-  let filtered=arr;
-  if(period==='today')filtered=arr.filter(e=>e.date===todayStr2);
-  else if(period==='week'){const wd=getWeekDates();filtered=arr.filter(e=>wd.includes(e.date))}
-  else if(period==='month')filtered=arr.filter(e=>e.date.startsWith(todayStr2.slice(0,7)));
-
   const fr=document.getElementById('filter-row');
-  fr.innerHTML='<span class="filter-label">Period:</span>'+
-    ['today','week','month','all'].map(p=>`<button class="filter-chip${p===period?' active':''}" onclick="setPeriod('${p}')">${p.charAt(0).toUpperCase()+p.slice(1)}</button>`).join('');
+  let filtered;
+  if(isCurrentMonthSelected()){
+    const todayStr2=new Date().toISOString().slice(0,10);
+    if(period==='today')filtered=arr.filter(e=>e.date===todayStr2);
+    else if(period==='week'){const wd=getWeekDates();filtered=arr.filter(e=>wd.includes(e.date))}
+    else if(period==='month')filtered=arr.filter(e=>e.date.startsWith(todayStr2.slice(0,7)));
+    else filtered=arr;
+    fr.innerHTML='<span class="filter-label">Period:</span>'+
+      ['today','week','month','all'].map(p=>`<button class="filter-chip${p===period?' active':''}" onclick="setPeriod('${p}')">${p.charAt(0).toUpperCase()+p.slice(1)}</button>`).join('');
+  } else {
+    filtered=arr.filter(e=>e.date.startsWith(getReportFilterPrefix()));
+    fr.innerHTML=`<span class="filter-label">Showing:</span><span class="filter-chip active" style="cursor:default">${esc(reportFilterLabel())}</span>`;
+  }
 
   const catMap={};
   const catNotesMap={};
@@ -1166,7 +1213,7 @@ function buildCategorySection(arr,period){
   }).join('');
 }
 
-async function setPeriod(p){activePeriod=p;buildCategorySection(await loadExpenses(),p)}
+function setPeriod(p){activePeriod=p;buildCategorySection(expensesCache,p)}
 
 async function exportExcel(){
   const arr=await loadExpenses();
