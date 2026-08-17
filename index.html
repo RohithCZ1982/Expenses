@@ -149,6 +149,27 @@
     <div class="chart-title"><span>Category Budgets</span></div>
     <div id="budget-list"></div>
   </div>
+
+  <div class="chart-card">
+    <div class="chart-title"><span>Add a User</span></div>
+    <div style="font-size:11px;color:#8a8480;margin-top:-6px;margin-bottom:10px">Create a login for someone whose expenses you want to track. Their entries roll into your Team report on the Analytics page.</div>
+    <div class="form-row">
+      <label class="form-label">Email</label>
+      <input class="form-input" type="email" id="nu-email" placeholder="name@example.com" autocomplete="off">
+    </div>
+    <div class="form-row">
+      <label class="form-label">Password</label>
+      <div class="pass-wrap">
+        <input class="form-input" type="password" id="nu-password" placeholder="Set a password for them" autocomplete="new-password">
+        <button type="button" class="pass-toggle" id="nu-pass-toggle" onclick="toggleNewUserPass()" title="Show password">
+          <svg id="nu-eye-open" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          <svg id="nu-eye-closed" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+        </button>
+      </div>
+    </div>
+    <button class="btn-add" onclick="createSubUser()">Create User</button>
+    <div id="my-users-list"></div>
+  </div>
 </div>
 
 <div id="screen-entry" class="screen active">
@@ -277,6 +298,23 @@
   <div class="chart-card" style="padding:12px">
     <table class="cat-table" id="cat-table">
       <thead><tr><th>Category</th><th>Total</th><th>%</th><th></th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <div class="chart-card" id="team-report-card" style="display:none">
+    <div class="chart-title"><span>Team expenses — <span id="team-report-period"></span></span></div>
+    <div style="font-size:11px;color:#8a8480;margin-top:-6px;margin-bottom:10px">Everyone you've added, and everyone they've added</div>
+    <table class="cat-table" id="team-users-table">
+      <thead><tr><th>User</th><th>Total</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <div class="chart-card" id="team-cat-card" style="display:none;padding:12px">
+    <div class="chart-title"><span>Team category breakdown</span></div>
+    <table class="cat-table" id="team-cat-table">
+      <thead><tr><th>Category</th><th>Total</th><th>%</th><th></th></tr></thead>
       <tbody></tbody>
     </table>
   </div>
@@ -969,6 +1007,95 @@ async function buildSettingsScreen(){
   monthExp.forEach(e=>{catMap[e.category]=(catMap[e.category]||0)+e.amount});
   document.getElementById('budget-list').innerHTML=
     CATS.map(c=>budgetRowHtml(c.name,c.name,c.emoji,catMap[c.name]||0)).join('');
+
+  loadMyUsers();
+}
+
+function toggleNewUserPass(){
+  const input=document.getElementById('nu-password');
+  const show=input.type==='password';
+  input.type=show?'text':'password';
+  document.getElementById('nu-eye-open').style.display=show?'none':'';
+  document.getElementById('nu-eye-closed').style.display=show?'':'none';
+  document.getElementById('nu-pass-toggle').title=show?'Hide password':'Show password';
+}
+
+async function createSubUser(){
+  const email=document.getElementById('nu-email').value.trim();
+  const password=document.getElementById('nu-password').value;
+  if(!email||!password){showToast('Enter an email and password');return}
+  try{
+    const res=await api('/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password})});
+    const d=await res.json().catch(()=>({}));
+    if(res.ok){
+      showToast('User created');
+      document.getElementById('nu-email').value='';
+      document.getElementById('nu-password').value='';
+      loadMyUsers();
+    }else{
+      showToast(d.error||'Could not create user');
+    }
+  }catch(err){console.error(err);showToast('Connection error')}
+}
+
+async function loadMyUsers(){
+  const el=document.getElementById('my-users-list');
+  if(!el)return;
+  try{
+    const res=await api('/users/created');
+    if(!res.ok){el.innerHTML='';return}
+    const users=await res.json();
+    if(!users.length){el.innerHTML='<div style="padding:10px 0;color:#8a8480;font-size:12px">No users added yet</div>';return}
+    el.innerHTML='<div style="font-size:11px;color:#8a8480;margin:12px 0 4px">Users you\'ve added</div>'+
+      users.map(u=>{
+        const d=new Date(u.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});
+        return`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--cream3);font-size:12.5px">
+          <span>${esc(u.email||'')}</span><span style="color:#8a8480;font-size:11px">Added ${d}</span>
+        </div>`;
+      }).join('');
+  }catch(err){console.error('Load my users error:',err)}
+}
+
+async function buildTeamReport(){
+  const reportCard=document.getElementById('team-report-card');
+  const catCard=document.getElementById('team-cat-card');
+  try{
+    const res=await api('/hierarchy/report?prefix='+encodeURIComponent(getReportFilterPrefix()));
+    if(!res.ok){reportCard.style.display='none';catCard.style.display='none';return}
+    const data=await res.json();
+    if(!data.users||data.users.length<2){
+      reportCard.style.display='none';
+      catCard.style.display='none';
+      return;
+    }
+    reportCard.style.display='';
+    catCard.style.display='';
+    document.getElementById('team-report-period').textContent=reportFilterLabel();
+
+    const sorted=data.users.slice().sort((a,b)=>b.total-a.total);
+    document.querySelector('#team-users-table tbody').innerHTML=sorted.map(u=>
+      `<tr><td>${esc((u.email||'').split('@')[0]||u.userId)}</td><td style="font-weight:500">${formatAmt(u.total)}</td></tr>`
+    ).join('')+`<tr><td style="font-weight:500">Total</td><td style="font-weight:500">${formatAmt(data.grandTotal)}</td></tr>`;
+
+    const catTotal=data.categories.reduce((s,c)=>s+c.total,0);
+    document.querySelector('#team-cat-table tbody').innerHTML=data.categories.length
+      ? data.categories.map((c,i)=>{
+          const pct=catTotal?Math.round(c.total/catTotal*100):0;
+          const ci=getCatInfo(c.category);
+          const col=CAT_COLORS[i%CAT_COLORS.length];
+          return`<tr>
+            <td style="display:flex;align-items:center;gap:7px"><span>${ci.emoji}</span><span>${esc(c.category)}</span></td>
+            <td style="font-weight:500">${formatAmt(c.total)}</td>
+            <td style="color:#8a8480">${pct}%</td>
+            <td><div class="cat-bar-wrap"><div class="cat-bar" style="width:${pct}%;background:${col}"></div></div></td>
+          </tr>`;
+        }).join('')
+      : '<tr><td colspan="4" style="color:#8a8480;text-align:center;padding:16px;font-size:12px">No data for this period</td></tr>';
+  }catch(err){
+    console.error('Team report error:',err);
+    reportCard.style.display='none';
+    catCard.style.display='none';
+  }
 }
 
 function buildBudgetProgress(arr){
@@ -1044,6 +1171,7 @@ function onReportFilterChange(){
   buildBudgetProgress(expensesCache);
   buildDailyChart(expensesCache);
   buildCategorySection(expensesCache,activePeriod);
+  buildTeamReport();
 }
 
 let chartWeek,chartMonth,chartCat;

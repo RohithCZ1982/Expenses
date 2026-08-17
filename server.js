@@ -407,6 +407,114 @@ app.post('/api/admin/users/:id/limit', verifyJwt, requireAdmin, async (req, res)
   }
 });
 
+// ---- User hierarchy ----
+// Any approved user can create a sub-user — a full login of their own,
+// whose expenses roll up into the creator's team report. The creator sets
+// the password directly (there's no email-sending in this app), and the
+// new account is auto-approved rather than landing in the pending queue,
+// since the creator is already a vetted, approved user vouching for it.
+app.post('/api/users', requireAuth, async (req, res) => {
+  if (!authConfigured(res)) return;
+  const { email, password } = req.body || {};
+  if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
+  if (isAuthRateLimited('create-user:' + req.userId, 60 * 60 * 1000, 10)) {
+    return res.status(429).json({ error: RATE_LIMITED_MSG });
+  }
+  try {
+    const { ok, status, data } = await neonAuthCall('/sign-up/email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: requestOrigin(req) },
+      body: JSON.stringify({ name: email.split('@')[0], email, password }),
+    });
+    if (!ok) {
+      let msg = data?.message || data?.error?.message || data?.error;
+      if (typeof msg !== 'string' || !msg) msg = `Auth service error (${status})`;
+      return res.status(status >= 500 ? 502 : 400).json({ error: msg });
+    }
+    if (!data.user?.id) return res.status(502).json({ error: 'User created, but no user id was returned' });
+    // Deliberately does not return accessToken/refreshToken — this request
+    // is made by the creator's browser, and returning the new user's tokens
+    // would let the client log the creator's own session into the new
+    // account by mistake.
+    await pool.query(
+      `INSERT INTO user_access (user_id, email, status, created_by)
+       VALUES ($1, $2, 'approved', $3)
+       ON CONFLICT (user_id) DO UPDATE SET
+         email = EXCLUDED.email, status = 'approved', created_by = EXCLUDED.created_by`,
+      [data.user.id, email.toLowerCase(), req.userId]
+    );
+    res.json({ success: true, userId: data.user.id, email: email.toLowerCase() });
+  } catch (err) {
+    console.error('Create sub-user error:', err);
+    const detail = err?.cause?.code || err?.cause?.message || err.message || 'network error';
+    res.status(502).json({ error: `Could not reach the auth service (${detail})` });
+  }
+});
+
+// The users the signed-in account has directly created
+app.get('/api/users/created', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT user_id, email, status, created_at FROM user_access WHERE created_by = $1 ORDER BY created_at DESC',
+      [req.userId]
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Report across the signed-in user's whole hierarchy (self + everyone they
+// created, directly or transitively) — per-user totals and a combined
+// category breakdown. prefix is an optional 'YYYY' or 'YYYY-MM' filter.
+app.get('/api/hierarchy/report', requireAuth, async (req, res) => {
+  const prefix = String(req.query.prefix || '');
+  if (prefix && !/^\d{4}(-\d{2})?$/.test(prefix)) {
+    return res.status(400).json({ error: 'Invalid prefix' });
+  }
+  try {
+    const { rows: treeRows } = await pool.query(
+      `WITH RECURSIVE tree AS (
+         SELECT user_id, email FROM user_access WHERE user_id = $1
+         UNION ALL
+         SELECT ua.user_id, ua.email FROM user_access ua
+         JOIN tree t ON ua.created_by = t.user_id
+       )
+       SELECT user_id, email FROM tree`,
+      [req.userId]
+    );
+    const ids = treeRows.map(r => r.user_id);
+    const emailByUser = Object.fromEntries(treeRows.map(r => [r.user_id, r.email]));
+
+    const params = prefix ? [ids, prefix + '%'] : [ids];
+    const dateFilter = prefix ? 'AND date::text LIKE $2' : '';
+    const { rows: expRows } = await pool.query(
+      `SELECT user_id, category, amount FROM expenses WHERE user_id = ANY($1) ${dateFilter}`,
+      params
+    );
+
+    const byUser = {};
+    const byCategory = {};
+    let grandTotal = 0;
+    for (const e of expRows) {
+      const amt = parseFloat(e.amount);
+      grandTotal += amt;
+      byUser[e.user_id] = (byUser[e.user_id] || 0) + amt;
+      byCategory[e.category] = (byCategory[e.category] || 0) + amt;
+    }
+
+    res.json({
+      users: ids.map(id => ({ userId: id, email: emailByUser[id], total: byUser[id] || 0 })),
+      categories: Object.entries(byCategory)
+        .map(([category, total]) => ({ category, total }))
+        .sort((a, b) => b.total - a.total),
+      grandTotal,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Initialize database table
 async function initDB() {
   try {
@@ -441,6 +549,8 @@ async function initDB() {
       );
       ALTER TABLE user_access ADD COLUMN IF NOT EXISTS scan_limit INTEGER;
       ALTER TABLE user_access ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMP;
+      ALTER TABLE user_access ADD COLUMN IF NOT EXISTS created_by TEXT REFERENCES user_access(user_id);
+      CREATE INDEX IF NOT EXISTS idx_user_access_created_by ON user_access(created_by);
       CREATE INDEX IF NOT EXISTS idx_expenses_user ON expenses(user_id, date);
       CREATE INDEX IF NOT EXISTS idx_ai_usage_user ON ai_usage(user_id, created_at);
       CREATE TABLE IF NOT EXISTS budgets (
