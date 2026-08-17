@@ -330,7 +330,7 @@
   <div class="chart-card" id="team-cat-card" style="display:none;padding:12px">
     <div class="chart-title"><span>Team category breakdown</span></div>
     <table class="cat-table" id="team-cat-table">
-      <thead><tr><th>Category</th><th>Total</th><th>%</th><th></th></tr></thead>
+      <thead><tr><th>Category</th><th>Total</th><th>%</th><th></th><th></th></tr></thead>
       <tbody></tbody>
     </table>
   </div>
@@ -1112,6 +1112,7 @@ async function buildTeamReport(){
       `<tr><td>${esc((u.email||'').split('@')[0]||u.userId)}</td><td style="font-weight:500">${formatAmt(u.total)}</td></tr>`
     ).join('')+`<tr><td style="font-weight:500">Total</td><td style="font-weight:500">${formatAmt(data.grandTotal)}</td></tr>`;
 
+    teamCategoriesCache=data.categories;
     const catTotal=data.categories.reduce((s,c)=>s+c.total,0);
     document.querySelector('#team-cat-table tbody').innerHTML=data.categories.length
       ? data.categories.map((c,i)=>{
@@ -1123,14 +1124,31 @@ async function buildTeamReport(){
             <td style="font-weight:500">${formatAmt(c.total)}</td>
             <td style="color:#8a8480">${pct}%</td>
             <td><div class="cat-bar-wrap"><div class="cat-bar" style="width:${pct}%;background:${col}"></div></div></td>
+            <td><button class="cat-note-btn" onclick="showTeamCatUsers('${esc(c.category)}')" title="View by user" aria-label="View by user">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3v4a1 1 0 001 1h4"/><path d="M17 21H7a2 2 0 01-2-2V5a2 2 0 012-2h7l5 5v11a2 2 0 01-2 2z"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></svg>
+            </button></td>
           </tr>`;
         }).join('')
-      : '<tr><td colspan="4" style="color:#8a8480;text-align:center;padding:16px;font-size:12px">No data for this period</td></tr>';
+      : '<tr><td colspan="5" style="color:#8a8480;text-align:center;padding:16px;font-size:12px">No data for this period</td></tr>';
   }catch(err){
     console.error('Team report error:',err);
     reportCard.style.display='none';
     catCard.style.display='none';
   }
+}
+
+let teamCategoriesCache=[];
+
+function showTeamCatUsers(category){
+  const ci=getCatInfo(category);
+  const cat=teamCategoriesCache.find(c=>c.category===category);
+  const entries=cat?cat.byUser:[];
+  document.getElementById('notes-popup-title').textContent=`${ci.emoji} ${category}`;
+  const body=document.getElementById('notes-popup-body');
+  body.innerHTML=entries.length
+    ? entries.map(e=>`<div class="notes-row"><div class="notes-row-top"><span>${esc((e.email||'').split('@')[0]||e.userId)}</span><span>${formatAmt(e.amount)}</span></div></div>`).join('')
+    : '<div class="notes-empty">No entries for this period.</div>';
+  document.getElementById('notes-popup').classList.remove('hidden');
 }
 
 function buildBudgetProgress(arr){

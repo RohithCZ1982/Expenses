@@ -524,18 +524,27 @@ app.get('/api/hierarchy/report', requireAuth, async (req, res) => {
 
     const byUser = {};
     const byCategory = {};
+    const byCategoryUser = {};
     let grandTotal = 0;
     for (const e of expRows) {
       const amt = parseFloat(e.amount);
       grandTotal += amt;
       byUser[e.user_id] = (byUser[e.user_id] || 0) + amt;
       byCategory[e.category] = (byCategory[e.category] || 0) + amt;
+      const catUsers = (byCategoryUser[e.category] = byCategoryUser[e.category] || {});
+      catUsers[e.user_id] = (catUsers[e.user_id] || 0) + amt;
     }
 
     res.json({
       users: ids.map(id => ({ userId: id, email: emailByUser[id], total: byUser[id] || 0 })),
       categories: Object.entries(byCategory)
-        .map(([category, total]) => ({ category, total }))
+        .map(([category, total]) => ({
+          category,
+          total,
+          byUser: Object.entries(byCategoryUser[category] || {})
+            .map(([userId, amount]) => ({ userId, email: emailByUser[userId], amount }))
+            .sort((a, b) => b.amount - a.amount),
+        }))
         .sort((a, b) => b.total - a.total),
       grandTotal,
     });
