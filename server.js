@@ -270,22 +270,29 @@ function isAdminEmail(email) {
   return !!ADMIN_EMAIL && (email || '').toLowerCase() === ADMIN_EMAIL;
 }
 
-// Upsert the user's access row and return their current status.
+// Upsert the user's access row and return their current status + consent.
 // recordLogin is true only when called right after an actual sign-in/sign-up
 // (not on every authenticated request) so last_login_at reflects real logins
 // without writing to the DB on every API call.
+// consent_at is only ever set here, in the INSERT branch — which only fires
+// the first time a given user_id is seen. For a genuine self-service
+// sign-up that's exactly the moment they ticked the Privacy Policy checkbox,
+// so it doubles as recording that consent. A sub-user created by someone
+// else (via POST /api/users) already has a row by the time they first sign
+// in, so this always takes the UPDATE branch for them and consent_at stays
+// NULL — which is what prompts their one-time consent screen.
 async function ensureAccess(userId, email, recordLogin) {
   const initial = isAdminEmail(email) ? 'approved' : 'pending';
   const { rows } = await pool.query(
-    `INSERT INTO user_access (user_id, email, status, last_login_at)
-     VALUES ($1, $2, $3, CASE WHEN $4 THEN CURRENT_TIMESTAMP ELSE NULL END)
+    `INSERT INTO user_access (user_id, email, status, last_login_at, consent_at)
+     VALUES ($1, $2, $3, CASE WHEN $4 THEN CURRENT_TIMESTAMP ELSE NULL END, CURRENT_TIMESTAMP)
      ON CONFLICT (user_id) DO UPDATE SET
        email = COALESCE(EXCLUDED.email, user_access.email),
        last_login_at = CASE WHEN $4 THEN CURRENT_TIMESTAMP ELSE user_access.last_login_at END
-     RETURNING status`,
+     RETURNING status, consent_at`,
     [userId, email || null, initial, !!recordLogin]
   );
-  return rows[0].status;
+  return rows[0];
 }
 
 async function verifyJwt(req, res, next) {
@@ -302,7 +309,14 @@ async function verifyJwt(req, res, next) {
     return res.status(401).json({ error: 'Session expired — please sign in again' });
   }
   try {
-    req.accessStatus = req.isAdmin ? 'approved' : await ensureAccess(req.userId, req.userEmail);
+    if (req.isAdmin) {
+      req.accessStatus = 'approved';
+      req.needsConsent = false;
+    } else {
+      const access = await ensureAccess(req.userId, req.userEmail);
+      req.accessStatus = access.status;
+      req.needsConsent = !access.consent_at;
+    }
   } catch (err) {
     console.error('Access check failed:', err.message);
     return res.status(500).json({ error: 'Could not verify account access' });
@@ -337,7 +351,22 @@ app.get('/api/me', verifyJwt, (req, res) => {
     email: req.userEmail,
     status: ADMIN_EMAIL ? req.accessStatus : 'approved',
     isAdmin: req.isAdmin,
+    needsConsent: !!req.needsConsent,
   });
+});
+
+// One-time Privacy Policy consent for users who never saw the sign-up
+// checkbox — i.e. sub-users a creator added directly (see POST /api/users).
+app.post('/api/consent', requireAuth, async (req, res) => {
+  try {
+    await pool.query(
+      'UPDATE user_access SET consent_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND consent_at IS NULL',
+      [req.userId]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Admin: list users with their AI usage cost, and change access status
@@ -551,6 +580,7 @@ async function initDB() {
       ALTER TABLE user_access ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMP;
       ALTER TABLE user_access ADD COLUMN IF NOT EXISTS created_by TEXT REFERENCES user_access(user_id);
       CREATE INDEX IF NOT EXISTS idx_user_access_created_by ON user_access(created_by);
+      ALTER TABLE user_access ADD COLUMN IF NOT EXISTS consent_at TIMESTAMP;
       CREATE INDEX IF NOT EXISTS idx_expenses_user ON expenses(user_id, date);
       CREATE INDEX IF NOT EXISTS idx_ai_usage_user ON ai_usage(user_id, created_at);
       CREATE TABLE IF NOT EXISTS budgets (
@@ -566,6 +596,15 @@ async function initDB() {
     // Pre-auth records have no owner; remove them so every expense belongs
     // to a signed-in user (idempotent — new rows always carry user_id)
     await pool.query('DELETE FROM expenses WHERE user_id IS NULL');
+
+    // Backfill consent_at for accounts that pre-date the consent_at column —
+    // only for self-service sign-ups (created_by IS NULL), since they already
+    // passed through the sign-up form's Privacy Policy checkbox. Sub-users
+    // created by someone else (created_by IS NOT NULL) are deliberately left
+    // NULL so they still get the one-time consent prompt.
+    await pool.query(
+      "UPDATE user_access SET consent_at = created_at WHERE consent_at IS NULL AND created_by IS NULL"
+    );
 
     // One-time (idempotent) cleanup for categories saved before case
     // normalization existed — e.g. "Petrol" and "petrol" as separate

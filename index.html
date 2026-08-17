@@ -50,6 +50,22 @@
   </div>
 </div>
 
+<div id="consent-screen" class="auth-screen hidden">
+  <div class="auth-card">
+    <img src="logo.svg" alt="" class="auth-logo">
+    <div class="screen-title">One more thing</div>
+    <div class="screen-sub">Please review and accept our Privacy Policy to continue</div>
+    <div class="form-row">
+      <label class="consent-label">
+        <input type="checkbox" id="consent-check">
+        <span>I agree to the <a href="#" onclick="showPrivacy();return false">Privacy Policy</a></span>
+      </label>
+    </div>
+    <div class="auth-error" id="consent-error"></div>
+    <button class="btn-add" id="consent-submit" onclick="submitConsent()">Agree & Continue</button>
+  </div>
+</div>
+
 <nav class="nav">
   <img src="logo.svg" alt="Expense Tracker" class="nav-logo">
   <button class="nav-btn active" onclick="showScreen('entry',this)" title="Add Expense" aria-label="Add Expense">
@@ -380,6 +396,25 @@ function setTokens(access,refresh){
 
 function showAuth(){document.getElementById('auth-screen').classList.remove('hidden')}
 function hideAuth(){document.getElementById('auth-screen').classList.add('hidden')}
+
+function showConsentGate(){document.getElementById('consent-screen').classList.remove('hidden')}
+function hideConsentGate(){document.getElementById('consent-screen').classList.add('hidden')}
+
+async function submitConsent(){
+  const errEl=document.getElementById('consent-error');
+  if(!document.getElementById('consent-check').checked){
+    errEl.textContent='Please check the box to continue';
+    return;
+  }
+  const btn=document.getElementById('consent-submit');
+  btn.disabled=true;errEl.textContent='';
+  try{
+    const res=await api('/consent',{method:'POST'});
+    if(!res.ok){errEl.textContent='Could not save — please try again';return}
+    hideConsentGate();
+  }catch(err){console.error(err);errEl.textContent='Connection error'}
+  finally{btn.disabled=false}
+}
 
 // Authenticated fetch: attaches the token, transparently refreshes an
 // expired session once, and falls back to the login screen on failure
@@ -1499,6 +1534,7 @@ if(resetToken){
     if(applyMe(me,document.getElementById('auth-error'))){
       await renderRecent();
       updateScanQuota();
+      if(me.needsConsent)showConsentGate();
     }
   })().catch(console.error);
 }else{
