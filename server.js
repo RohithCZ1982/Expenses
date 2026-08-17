@@ -558,6 +558,10 @@ app.get('/api/hierarchy/report', requireAuth, async (req, res) => {
 // /api/hierarchy/report (which only returns aggregates) so the normal
 // Analytics page load never has to pull every note/line item over the wire.
 app.get('/api/hierarchy/expenses', requireAuth, async (req, res) => {
+  const prefix = String(req.query.prefix || '');
+  if (prefix && !/^\d{4}(-\d{2})?$/.test(prefix)) {
+    return res.status(400).json({ error: 'Invalid prefix' });
+  }
   try {
     const { rows: users } = await pool.query(
       `WITH RECURSIVE tree AS (
@@ -569,10 +573,12 @@ app.get('/api/hierarchy/expenses', requireAuth, async (req, res) => {
        SELECT user_id, email FROM tree`,
       [req.userId]
     );
+    const dateFilter = prefix ? 'AND date::text LIKE $2' : '';
+    const params = prefix ? [users.map(u => u.user_id), prefix + '%'] : [users.map(u => u.user_id)];
     const { rows: expenses } = await pool.query(
       `SELECT user_id, TO_CHAR(date, 'YYYY-MM-DD') AS date, category, amount, note FROM expenses
-       WHERE user_id = ANY($1) ORDER BY date DESC`,
-      [users.map(u => u.user_id)]
+       WHERE user_id = ANY($1) ${dateFilter} ORDER BY date DESC`,
+      params
     );
     res.json({ users, expenses });
   } catch (err) {

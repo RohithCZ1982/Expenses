@@ -1413,8 +1413,12 @@ function addXlsxExpenseSheet(wb,usedNames,name,rows){
 }
 
 async function exportExcel(){
-  const arr=await loadExpenses();
-  if(!arr.length){showToast('No expenses to export');return}
+  const full=await loadExpenses();
+  if(!full.length){showToast('No expenses to export');return}
+  // Match whatever Month/Year is selected on the Analytics page, so the
+  // export lines up with what's on screen instead of always being all-time
+  const prefix=getReportFilterPrefix();
+  const arr=full.filter(e=>e.date.startsWith(prefix));
   try{
     const wb=XLSX.utils.book_new();
     const usedNames=new Set();
@@ -1422,7 +1426,7 @@ async function exportExcel(){
 
     let hier=null;
     try{
-      const res=await api('/hierarchy/expenses');
+      const res=await api('/hierarchy/expenses?prefix='+encodeURIComponent(prefix));
       if(res.ok)hier=await res.json();
     }catch(err){console.error('Hierarchy export fetch error:',err)}
 
@@ -1467,8 +1471,8 @@ async function exportExcel(){
       XLSX.utils.book_append_sheet(wb,ws2,xlsxSafeSheetName('Summary',usedNames));
     }
 
-    XLSX.writeFile(wb,`expenses_${todayStr()}.xlsx`);
-    showToast('Excel exported!');
+    XLSX.writeFile(wb,`expenses_${prefix||'all-time'}.xlsx`);
+    showToast('Excel exported for '+reportFilterLabel());
   }catch(err){
     console.error('Export error:',err);
     showToast('Could not export — please try again');
