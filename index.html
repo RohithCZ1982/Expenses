@@ -566,10 +566,12 @@ function applyMe(me,errEl){
     return false;
   }
   myEmail=me.email||'';
+  myUserId=me.userId||'';
   document.getElementById('nav-users').style.display=me.isAdmin?'':'none';
   return true;
 }
 let myEmail='';
+let myUserId='';
 
 let adminUsersCache=null;
 
@@ -1396,19 +1398,75 @@ function buildCategorySection(arr,period){
 
 function setPeriod(p){activePeriod=p;buildCategorySection(expensesCache,p)}
 
+function xlsxSafeSheetName(name,usedNames){
+  let n=String(name).replace(/[\\/?*\[\]:]/g,' ').trim().slice(0,31)||'Sheet';
+  let base=n,i=2;
+  while(usedNames.has(n.toLowerCase())){n=(base.slice(0,28)+' '+i).slice(0,31);i++}
+  usedNames.add(n.toLowerCase());
+  return n;
+}
+
+function addXlsxExpenseSheet(wb,usedNames,name,rows){
+  const ws=XLSX.utils.json_to_sheet(rows.map(e=>({Date:e.date,Category:e.category,Amount:parseFloat(e.amount),Note:e.note||''})));
+  ws['!cols']=[{wch:14},{wch:22},{wch:12},{wch:30}];
+  XLSX.utils.book_append_sheet(wb,ws,xlsxSafeSheetName(name,usedNames));
+}
+
 async function exportExcel(){
   const arr=await loadExpenses();
   if(!arr.length){showToast('No expenses to export');return}
   try{
-    const ws=XLSX.utils.json_to_sheet(arr.map(e=>({Date:e.date,Category:e.category,Amount:e.amount,Note:e.note||''})));
-    ws['!cols']=[{wch:14},{wch:22},{wch:12},{wch:30}];
     const wb=XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb,ws,'Expenses');
-    const bycat={};arr.forEach(e=>{bycat[e.category]=(bycat[e.category]||0)+e.amount});
-    const sumRows=[['Category','Total (₹)'],...Object.entries(bycat).sort((a,b)=>b[1]-a[1])];
-    const ws2=XLSX.utils.aoa_to_sheet(sumRows);
-    ws2['!cols']=[{wch:22},{wch:14}];
-    XLSX.utils.book_append_sheet(wb,ws2,'Summary');
+    const usedNames=new Set();
+    addXlsxExpenseSheet(wb,usedNames,'My Expenses',arr);
+
+    let hier=null;
+    try{
+      const res=await api('/hierarchy/expenses');
+      if(res.ok)hier=await res.json();
+    }catch(err){console.error('Hierarchy export fetch error:',err)}
+
+    if(hier&&hier.users.length>1){
+      const expByUser={};
+      hier.expenses.forEach(e=>{(expByUser[e.user_id]=expByUser[e.user_id]||[]).push(e)});
+
+      // One sheet per created user (and their created users, recursively) —
+      // excludes self, since "My Expenses" above already covers that
+      hier.users.filter(u=>u.user_id!==myUserId).forEach(u=>{
+        const label=(u.email||'').split('@')[0]||u.user_id;
+        addXlsxExpenseSheet(wb,usedNames,label,expByUser[u.user_id]||[]);
+      });
+
+      // Total amount per user, highest first
+      const totalRows=[['User','Total (₹)']];
+      let grand=0;
+      hier.users.map(u=>({
+        label:(u.email||'').split('@')[0]||u.user_id,
+        total:(expByUser[u.user_id]||[]).reduce((s,e)=>s+parseFloat(e.amount),0),
+      })).sort((a,b)=>b.total-a.total).forEach(u=>{
+        grand+=u.total;
+        totalRows.push([u.label,u.total]);
+      });
+      totalRows.push(['Total',grand]);
+      const wsUser=XLSX.utils.aoa_to_sheet(totalRows);
+      wsUser['!cols']=[{wch:22},{wch:14}];
+      XLSX.utils.book_append_sheet(wb,wsUser,xlsxSafeSheetName('Total by User',usedNames));
+
+      // Total per category, clubbed across the whole hierarchy
+      const bycat={};
+      hier.expenses.forEach(e=>{bycat[e.category]=(bycat[e.category]||0)+parseFloat(e.amount)});
+      const catRows=[['Category','Total (₹)'],...Object.entries(bycat).sort((a,b)=>b[1]-a[1])];
+      const wsCat=XLSX.utils.aoa_to_sheet(catRows);
+      wsCat['!cols']=[{wch:22},{wch:14}];
+      XLSX.utils.book_append_sheet(wb,wsCat,xlsxSafeSheetName('Total by Category',usedNames));
+    }else{
+      const bycat={};arr.forEach(e=>{bycat[e.category]=(bycat[e.category]||0)+e.amount});
+      const sumRows=[['Category','Total (₹)'],...Object.entries(bycat).sort((a,b)=>b[1]-a[1])];
+      const ws2=XLSX.utils.aoa_to_sheet(sumRows);
+      ws2['!cols']=[{wch:22},{wch:14}];
+      XLSX.utils.book_append_sheet(wb,ws2,xlsxSafeSheetName('Summary',usedNames));
+    }
+
     XLSX.writeFile(wb,`expenses_${todayStr()}.xlsx`);
     showToast('Excel exported!');
   }catch(err){

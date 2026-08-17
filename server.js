@@ -553,6 +553,33 @@ app.get('/api/hierarchy/report', requireAuth, async (req, res) => {
   }
 });
 
+// Full line-item expenses across the signed-in user's hierarchy — used by
+// the Excel export to build one sheet per team member. Separate from
+// /api/hierarchy/report (which only returns aggregates) so the normal
+// Analytics page load never has to pull every note/line item over the wire.
+app.get('/api/hierarchy/expenses', requireAuth, async (req, res) => {
+  try {
+    const { rows: users } = await pool.query(
+      `WITH RECURSIVE tree AS (
+         SELECT user_id, email FROM user_access WHERE user_id = $1
+         UNION ALL
+         SELECT ua.user_id, ua.email FROM user_access ua
+         JOIN tree t ON ua.created_by = t.user_id
+       )
+       SELECT user_id, email FROM tree`,
+      [req.userId]
+    );
+    const { rows: expenses } = await pool.query(
+      `SELECT user_id, TO_CHAR(date, 'YYYY-MM-DD') AS date, category, amount, note FROM expenses
+       WHERE user_id = ANY($1) ORDER BY date DESC`,
+      [users.map(u => u.user_id)]
+    );
+    res.json({ users, expenses });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Initialize database table
 async function initDB() {
   try {
